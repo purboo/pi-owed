@@ -110,7 +110,7 @@ test('SG3: every semantic kind stales a stage; bookkeeping and other nodes do no
   const {stageLedgerReason,CHANGING_KINDS}=await import('../src/stage.ts');
   const f=await fixture();try{
     const staged=await f.bundle({touches:['b','src/module']});const state=(await ops.readState(f)).state;
-    for(const kind of CHANGING_KINDS){const d={kind,seq:staged.entry.seq+1,by:kind==='obs'?'executor:owed':'parent:test',node:'b',nodes:['b']} as unknown as Entry;assert.equal(stageLedgerReason(staged.entry,[d],state.plan,state.plan),`${d.seq}/${kind}`,kind);}
+    for(const kind of CHANGING_KINDS){const d={kind,seq:staged.entry.seq+1,by:'parent:test',node:'b',nodes:['b']} as unknown as Entry;assert.equal(stageLedgerReason(staged.entry,[d],state.plan,state.plan),`${d.seq}/${kind}`,kind);}
     const measured={kind:'obs',seq:10,by:'executor:owed',subject:'b'} as Entry;assert.equal(stageLedgerReason(staged.entry,[measured],state.plan,state.plan),'10/obs');
     for(const kind of ['note','stage','accept','reject','overturn','send','sweep','refresh','decoy-commit','decoy-reveal'])assert.equal(stageLedgerReason(staged.entry,[{kind,seq:10,node:'b'} as Entry],state.plan,state.plan),undefined,kind);
     assert.equal(stageLedgerReason(staged.entry,[{...measured,probe:'trunk'} as Entry],state.plan,state.plan),undefined);
