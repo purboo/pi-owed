@@ -1138,45 +1138,53 @@ async function applyStageAppends(cwd: string, stage: StageEntry, bundle: StageBu
 }
 export interface AcceptResult {id:string;entry:Entry;ruling:number;plan?:number;appends:string[];decision?:DecideResult;alreadyAccepted?:boolean}
 export const acceptText = (r:AcceptResult):string => `accepted ${r.id}: ruling #${r.ruling}${r.plan !== undefined ? `; plan #${r.plan}` : ''}${r.appends.length ? `; appended ${r.appends.join(', ')}` : ''}${r.alreadyAccepted ? '; already accepted' : ''}${r.decision?.deliveryFailures.length ? `\n${r.decision.deliveryFailures.join('\n')}` : ''}`;
+class AcceptMoved extends Error {}
 export async function accept(o: Actor & {id:string;amend?:string;dsa?:Pick<Dsa,'describe'|'send'>;signal?:AbortSignal}): Promise<AcceptResult> {
   parentAct(o);
   if (o.amend !== undefined && (typeof o.amend !== 'string' || !o.amend.trim() || o.amend.length > 8000)) throw new OwedError('amend must be nonempty text of at most 8000 chars','usage');
+  // Commands (dsa describe, plan admission) run before the lock; the lock only revalidates the read sequence and appends.
+  for (let attempt = 1;; attempt++) {
+    try { return await acceptOnce(o); }
+    catch (error) { if (!(error instanceof AcceptMoved)) throw error; if (attempt >= 5) throw new OwedError(`ledger changed during accept ${o.id}; retry; nothing recorded`); }
+  }
+}
+async function acceptOnce(o: Actor & {id:string;amend?:string;dsa?:Pick<Dsa,'describe'|'send'>;signal?:AbortSignal}): Promise<AcceptResult> {
   const ledger = await Ledger.open(o.cwd), client = o.dsa ?? new Dsa({cwd:o.cwd});
-  let delivery: (() => Promise<DecideResult>) | undefined;
+  checkAbort(o.signal);
+  const initial = await load(ledger);
+  let latest = initial;
+  const e = stageEntry(latest.entries,o.id), bundle = parseBundle((await ledger.getBlob(e.bundle)).toString()), closed = stageClosed(latest.entries,e);
+  if (closed === 'rejected') throw new OwedError(`stage ${o.id} is rejected`);
+  if (closed === 'accepted') {
+    const accepted = latest.entries.find(x => x.kind === 'accept' && x.stage === o.id)! as Extract<Entry,{kind:'accept'}>;
+    return {id:o.id,entry:accepted,ruling:accepted.ruling,plan:accepted.plan,appends:await applyStageAppends(o.cwd,e,bundle,accepted.ruling),alreadyAccepted:true};
+  }
+  const reason = await stageReason(o,e,latest,client,true);
+  if (reason) throw new OwedError(`stage ${o.id} is stale: ${reason} — fork again`);
+  for (const older of latest.entries) if (older.kind === 'stage' && older.seq < e.seq && !stageClosed(latest.entries,older) && overlap(e.touches,older.touches,latest.state.plan) && !await stageReason(o,older,latest,client,true)) throw new OwedError(`accept ${stageId(older.seq)} first or reject it`);
+  for (const a of bundle.appends ?? []) if (!latest.state.plan.drive?.delegate?.appends?.includes(a.path)) throw new OwedError(`append path ${a.path} is no longer delegated`);
+  const prefix: Draft[] = [];
+  let source: {file:string;path:string;text:string} | undefined;
+  if (e.patched_plan) {
+    const bytes = await ledger.getBlob(e.patched_plan), root = await git.repoRoot(o.cwd), file = resolve(root,e.plan_path!);
+    source = {file,path:e.plan_path!,text:bytes.toString()};
+    const stored = await storePlan(o.cwd,ledger,source.text,latest.state.plan,undefined,o);
+    const planned = await planDrafts({...o,path:source.path,note:`accept ${o.id}`},ledger,stored,latest.state);
+    prefix.push(...planned.drafts);
+    const plannedState = replayed(planned.latest,prefix);
+    latest = {...planned.latest,state:plannedState,entries:[...entriesOf(plannedState)]};
+  }
+  const text = `${o.amend ?? bundle.ruling_text} [stage ${o.id}]`;
+  const decision = bundle.decide ? await prepareDecision({...o,...bundle.decide,nodes:bundle.decide.nodes!,text,dsa:client},ledger,latest,source,true) : undefined;
+  let deliver: (() => Promise<DecideResult>) | undefined;
   const result = await ledger.withLock(async () => {
     checkAbort(o.signal);
-    let latest = await load(ledger);
-    const e = stageEntry(latest.entries,o.id), bundle = parseBundle((await ledger.getBlob(e.bundle)).toString()), closed = stageClosed(latest.entries,e);
-    if (closed === 'rejected') throw new OwedError(`stage ${o.id} is rejected`);
-    if (closed === 'accepted') {
-      const accepted = latest.entries.find(x => x.kind === 'accept' && x.stage === o.id)! as Extract<Entry,{kind:'accept'}>;
-      return {id:o.id,entry:accepted,ruling:accepted.ruling,plan:accepted.plan,appends:await applyStageAppends(o.cwd,e,bundle,accepted.ruling),alreadyAccepted:true};
-    }
-    const reason = await stageReason(o,e,latest,client,true);
-    if (reason) throw new OwedError(`stage ${o.id} is stale: ${reason} — fork again`);
-    for (const older of latest.entries) if (older.kind === 'stage' && older.seq < e.seq && !stageClosed(latest.entries,older) && overlap(e.touches,older.touches,latest.state.plan) && !await stageReason(o,older,latest,client,true)) throw new OwedError(`accept ${stageId(older.seq)} first or reject it`);
-    for (const a of bundle.appends ?? []) if (!latest.state.plan.drive?.delegate?.appends?.includes(a.path)) throw new OwedError(`append path ${a.path} is no longer delegated`);
-    const initial = latest, prefix: Draft[] = [];
-    let source: {file:string;path:string;text:string} | undefined;
-    if (e.patched_plan) {
-      const bytes = await ledger.getBlob(e.patched_plan), root = await git.repoRoot(o.cwd), file = resolve(root,e.plan_path!);
-      source = {file,path:e.plan_path!,text:bytes.toString()};
-      const stored = await storePlan(o.cwd,ledger,source.text,latest.state.plan,undefined,o);
-      const planned = await planDrafts({...o,path:source.path,note:`accept ${o.id}`},ledger,stored,latest.state);
-      prefix.push(...planned.drafts);
-      const plannedState = replayed(planned.latest,prefix);
-      latest = {...planned.latest,state:plannedState,entries:[...entriesOf(plannedState)]};
-    }
-    const text = `${o.amend ?? bundle.ruling_text} [stage ${o.id}]`;
+    if ((await load(ledger)).state.seq !== initial.state.seq) throw new AcceptMoved();
     let finishDecision: (entries:Entry[]) => DecideResult;
-    let deliver: ((r:DecideResult) => Promise<DecideResult>) | undefined;
     let decisionDrafts: Draft[], decisionFile: AmendEdit | undefined;
-    if (bundle.decide) {
-      const decision = await prepareDecision({...o,...bundle.decide,nodes:bundle.decide.nodes!,text,dsa:client},ledger,latest,source,true);
+    if (decision) {
       const pending = await decision.prepare(latest);
-      decisionDrafts = pending.drafts; decisionFile = pending.file;
-      finishDecision = pending.finish;
-      deliver = decision.deliver;
+      decisionDrafts = pending.drafts; decisionFile = pending.file; finishDecision = pending.finish;
     } else {
       const d: Draft = {kind:'rule',by:by(o),channel:o.channel,nodes:[e.node],text};
       guard(latest.state,d); decisionDrafts = [d];
@@ -1195,16 +1203,18 @@ export async function accept(o: Actor & {id:string;amend?:string;dsa?:Pick<Dsa,'
       const temp = `${file.file}.owed-stage-${randomUUID()}.tmp`;
       try {await writeFile(temp,file.text);await chmod(temp,(await stat(file.file)).mode & 0o7777);await rename(temp,file.file);} finally {await unlink(temp).catch(() => undefined);}
     }
-    const entries = await ledger.append(drafts), decided = finishDecision(entries.slice(prefix.length,-1)), sendDecision = deliver;
-    if (sendDecision) delivery = () => sendDecision(decided);
-    else delivery = async () => {
+    const entries = await ledger.append(drafts), decided = finishDecision(entries.slice(prefix.length,-1));
+    if (decision) deliver = () => decision.deliver(decided);
+    else deliver = async () => {
       const {deliverRuling} = await import('./answer.ts');
       const r = await deliverRuling(o.cwd,decided.rule,client);
       decided.deliveryFailures.push(...r.failures); return decided;
     };
-    return {id:o.id,entry:entries.at(-1)!,ruling,plan,appends:await applyStageAppends(o.cwd,e,bundle,ruling),decision:decided};
+    return {id:o.id,entry:entries.at(-1)!,ruling,plan,appends:[] as string[],decision:decided};
   },undefined,o.signal);
-  if (delivery) result.decision = await delivery();
+  // Marker-deduplicated appends follow the durable accept; a retry of an accepted stage completes missing ones.
+  result.appends = await applyStageAppends(o.cwd,e,bundle,result.ruling);
+  if (deliver) result.decision = await deliver();
   return result;
 }
 export async function acceptAllB(o: Actor & {dsa?:Pick<Dsa,'describe'|'send'>;signal?:AbortSignal}): Promise<AcceptResult[]> {
