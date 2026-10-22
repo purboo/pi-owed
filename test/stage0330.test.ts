@@ -298,3 +298,18 @@ test('SG1: old ledger bytes and replay stay identical, staging does not clear ha
     const old={...JSON.parse(f.plan)};delete old.drive;const oldPlan=parsePlan(JSON.stringify(old));const genesis=before.entries[0]!;assert.ok(genesis.kind==='genesis');const e={...genesis,plan:sha256('old')};e.hash=entryHash(e);const state=reduce([e],()=>oldPlan);assert.equal('stages' in state,false);assert.equal('delegate' in (state.plan.drive ?? {}),false);
   }finally{await f.cleanup();}
 });
+
+test('F2: the status stage count excludes stale stages from the open count',async()=>{
+  const f=await fixture();try{
+    const first=await f.bundle(),second=await f.bundle({},'b');
+    // A rule on node b makes the b stage stale; the a stage stays open.
+    await ops.rule({cwd:f.cwd,as:parent,nodes:['b'],text:'New fact',dsa:f.dsa});
+    const views=await ops.stages({...f.actor,all:true});
+    assert.equal(views.find(s=>s.id===first.id)!.state,'open');
+    assert.equal(views.find(s=>s.id===second.id)!.state,'stale');
+    // The status line counts the open stages only: one open, one stale (not two open).
+    const text=renderStatus(await ops.status(f));
+    assert.match(text,/Stages: 1 open \(1 stale\)/);
+    assert.doesNotMatch(text,/Stages: 2 open/);
+  }finally{await f.cleanup();}
+});
