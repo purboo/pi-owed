@@ -1089,6 +1089,11 @@ async function parentAct(o: Actor): Promise<void> {
 }
 export async function stage(o: Actor & {node:string;file:string;dsa?:Pick<Dsa,'describe'>}): Promise<StageEntry> {
   const ledger = await Ledger.open(o.cwd), bytes = await readFile(resolve(o.cwd,o.file),'utf8'), bundle = parseBundle(bytes), root = await git.repoRoot(o.cwd);
+  // SG2/SG6: anyone may stage, but a subagent call never records a parent or owner identity (D25.3): it records the
+  // delegated agent that wrote the proposal.
+  const call = process.env.DSA_CALL || process.env.DSA_EXEC, author = call && ['owner','parent'].includes(o.as.role) ? `writer:${call}` : by(o);
+  // The question fingerprint needs a dsa describe: it runs before the lock (a command never runs under it).
+  const questions = await questionFingerprint((await load(ledger)).state,o.node,o.dsa ?? new Dsa({cwd:o.cwd}));
   return ledger.withLock(async () => {
     const latest = await load(ledger), {state:s,entries} = latest;
     node(s,o.node);
@@ -1109,8 +1114,7 @@ export async function stage(o: Actor & {node:string;file:string;dsa?:Pick<Dsa,'d
       parsePlan(patched.toString());
       patch = {patched_plan:await ledger.putBlob(patched),plan_path:source.path,before_sha256:bundle.plan_patch.before_sha256,after_sha256:bundle.plan_patch.after_sha256};
     }
-    const questions = await questionFingerprint(s,o.node,o.dsa ?? new Dsa({cwd:o.cwd}));
-    const d: Draft = {kind:'stage',by:by(o),node:o.node,bundle:await ledger.putBlob(bytes),...patch,questions,touches,class:bundle.class ?? 'B',summary:bundle.summary,read_through_seq:bundle.read_through_seq};
+    const d: Draft = {kind:'stage',by:author,node:o.node,bundle:await ledger.putBlob(bytes),...patch,questions,touches,class:bundle.class ?? 'B',summary:bundle.summary,read_through_seq:bundle.read_through_seq};
     guard(s,d); return (await ledger.append([d]))[0] as StageEntry;
   });
 }

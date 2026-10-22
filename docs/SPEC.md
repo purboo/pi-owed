@@ -5463,7 +5463,7 @@ A writer, a fork or any process may prepare a decision as a *stage*; the parent
 or owner accepts it. The stage is a ledger entry, so the prepared decision and
 its acceptance are auditable and replayable.
 
-- `owed_stage {node, file, cwd?, as?}` (CLI `owed stage <node> --file
+- `owed_stage` {node, file, cwd?, as?} (CLI `owed stage <node> --file
   BUNDLE.json`) records a stage for `node` from a JSON bundle file. The bundle
   has exactly these fields (an unknown field refuses): `ruling_text` (required
   string, at most 8000 chars), `decide` (optional; the `owed_decide`
@@ -5483,11 +5483,11 @@ its acceptance are auditable and replayable.
   the patched file parses as a plan and hashes to `after_sha256` and every
   evidence file matches its sha; it stores the bundle bytes and the patched
   plan bytes as blobs. Any failure refuses with nothing recorded.
-- `owed_stages {all?, cwd?}` (CLI `owed stages [--all] [--json]`) lists the
+- `owed_stages` {all?, cwd?} (CLI `owed stages [--all] [--json]`) lists the
   stages: id (`S<seq>`), node, class, state (`open`, `stale` with its reason,
   `accepted` or `rejected`), age, the summary's first line and the accept
   command. `--all` also lists accepted and rejected stages.
-- `owed_accept {stage?, amend?, all_b?, as?, cwd?}` (CLI `owed accept S<n>
+- `owed_accept` {stage?, amend?, all_b?, as?, cwd?} (CLI `owed accept S<n>
   [--amend TEXT]`, `owed accept --all-b`) is a parent or owner act. It
   re-checks the stage and refuses a stale stage (`stage S<n> is stale: <reason>
   — fork again`) and a stage whose touches overlap an older open stage
@@ -5504,9 +5504,13 @@ its acceptance are auditable and replayable.
   continues. The output leads with `accepted S<n>: ruling #<seq>` and lists
   what was applied. `owed accept --all-b` accepts every open, non-stale
   class-B stage in seq order and stops at the first refusal.
-- `owed_reject {stage, note, as?, cwd?}` (CLI `owed reject S<n> --note TEXT`)
+  A stage records the principal that wrote the proposal (`by`). Inside a
+  pi-durable-subagents call that principal is never `parent` or `owner`
+  (D25.3): the stage records `writer:<dsa call>`, so a delegated proposal is
+  never attributed to the main agent.
+- `owed_reject` {stage, note, as?, cwd?} (CLI `owed reject S<n> --note TEXT`)
   records a rejection (parent or owner).
-- `owed_overturn {seq, note, as?, cwd?}` (CLI `owed overturn <seq> --note
+- `owed_overturn` {seq, note, as?, cwd?} (CLI `owed overturn <seq> --note
   TEXT`) records that a fork A act was wrong (parent or owner). From then on
   that A act kind is disabled for forks until a later plan re-lists it in
   `drive.delegate.a_acts`; status shows `A act <kind> disabled by overturn
