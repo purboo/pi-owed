@@ -81,7 +81,12 @@ function list(out: Summary, key: string, values: unknown[], shown = LIST_SHOWN, 
 }
 // Each registered tool has an explicit acting surface. Nested objects are metadata, not recursive clones.
 const TOOL_FIELDS: Record<string, string[]> = {
-  status: ['trunk', 'ready', 'mergeQueue', 'mergeBatch', 'genesis', 'housekeeping', 'drift', 'trunkWorktree', 'runtimeWarnings'],
+  stage: ['kind','seq','node','bundle','class','summary','read_through_seq','touches'],
+  stages: ['stages'],
+  accept: ['id','entry','ruling','plan','appends','alreadyAccepted','accepted'],
+  reject: ['kind','seq','stage','note'],
+  overturn: ['kind','seq','act','note'],
+  status: ['stages','stageCounts','aActs','disabledAActs','trunk', 'ready', 'mergeQueue', 'mergeBatch', 'genesis', 'housekeeping', 'drift', 'trunkWorktree', 'runtimeWarnings'],
   why: ['node', 'phase', 'accepted', 'held', 'reported', 'later', 'items', 'blocks', 'mergeChecks', 'untested', 'measuring', 'mergeWaiting', 'carried', 'halt', 'waiting', 'tryReceipts'],
   report: ['since', 'reviews', 'merges', 'blocks', 'waivers', 'decisions', 'changes', 'adoptions', 'halts', 'receipts', 'superseded', 'trackedDebt', 'quarantine'],
   brief: ['since', 'now', 'decisions', 'merges', 'rejected', 'blocked', 'inProgress', 'totals'],
@@ -179,6 +184,8 @@ function receiptPointer(name: string, args: Summary, data: Summary): string {
   const id = args.node;
   const node = typeof id === 'string' && Buffer.byteLength(id) <= 256 && !/[\r\n\x00]/.test(id) ? id : undefined;
   const receipt = node ? `owed why ${shellWord(node)} --full` : 'owed status --full';
+  if (tool === 'stages') return 'owed stages --all --json';
+  if (['stage','accept','reject'].includes(tool)) return 'owed stages --all --json';
   if (tool === 'status') return 'owed status --full';
   if (tool === 'why') return node ? receipt : '';
   if (tool === 'report' || tool === 'brief') return `owed ${tool}${args.since === undefined ? '' : ` --since ${shellWord(utf8Head(String(args.since), 128))}`}`;

@@ -68,8 +68,9 @@ function parseDrive(v: unknown, errors: string[]): DriveConfig {
   const out = structuredClone(DRIVE_DEFAULTS);
   if (!v || typeof v !== 'object' || Array.isArray(v)) { errors.push('drive: expected object'); return out; }
   const r = v as Record<string, unknown>;
-  for (const k of Object.keys(r)) if (!['max', 'repairs', 'measure', 'min_free_mb', 'idle_rewake_min', 'watch_idle_min', 'answer_grace_s', 'writer', 'reviewer', 'same_model'].includes(k)) errors.push(`drive.${k}: unknown key`);
+  for (const k of Object.keys(r)) if (!['delegate', 'max', 'repairs', 'measure', 'min_free_mb', 'idle_rewake_min', 'watch_idle_min', 'answer_grace_s', 'writer', 'reviewer', 'same_model'].includes(k)) errors.push(`drive.${k}: unknown key`);
   const int = (x: unknown, label: string, min: number, dflt: number): number => { if (x === undefined) return dflt; if (typeof x !== 'number' || !Number.isInteger(x) || x < min) { errors.push(`${label}: expected integer >= ${min}`); return dflt; } return x; };
+  if (r.delegate !== undefined) out.delegate = parseDelegate(r.delegate, errors);
   out.max = int(r.max, 'drive.max', 1, out.max);
   out.repairs = int(r.repairs, 'drive.repairs', 0, out.repairs);
   if (r.measure !== undefined) out.measure = int(r.measure, 'drive.measure', 1, MEASURE_DEFAULT);
@@ -87,6 +88,40 @@ function parseDrive(v: unknown, errors: string[]): DriveConfig {
   out.writer = agent(r.writer, 'drive.writer', out.writer);
   out.reviewer = agent(r.reviewer, 'drive.reviewer', out.reviewer);
   return out;
+}
+
+/** SG8: normalized defaults are confined to an explicitly present delegate block. */
+function parseDelegate(value: unknown, errors: string[]): import('./types.ts').DelegateConfig {
+  const out: import('./types.ts').DelegateConfig = { max: 4 };
+  const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (!object(value)) { errors.push('drive.delegate: expected mapping'); return out; }
+  for (const key of Object.keys(value)) if (!['on','max','budget','a_acts','appends'].includes(key)) errors.push(`drive.delegate.${key}: unknown key`);
+  if (value.max !== undefined) {
+    if (!Number.isInteger(value.max) || Number(value.max) < 1 || Number(value.max) > 16) errors.push('drive.delegate.max: expected integer 1..16');
+    else out.max = Number(value.max);
+  }
+  for (const key of ['on','a_acts','appends'] as const) {
+    const list = value[key]; if (list === undefined) continue;
+    const allowed = key === 'on' ? ['question','writer-stop','review-asks','infra-halt','needs-owner'] : key === 'a_acts' ? ['preferred-answer','infra-resume'] : undefined;
+    if (!Array.isArray(list) || list.some(x => typeof x !== 'string' || (allowed ? !allowed.includes(x) : !repositoryPath(x))) || new Set(list).size !== list.length) errors.push(`drive.delegate.${key}: expected distinct ${allowed?.join(', ') ?? 'repository paths'}`);
+    else Object.assign(out, { [key]: [...list] });
+  }
+  if (value.budget !== undefined) {
+    if (!object(value.budget)) errors.push('drive.delegate.budget: expected mapping');
+    else {
+      out.budget = {};
+      for (const [key, n] of Object.entries(value.budget)) {
+        if (!['rounds','wall_s'].includes(key)) errors.push(`drive.delegate.budget.${key}: unknown key`);
+        else if (!Number.isSafeInteger(n) || Number(n) < 1) errors.push(`drive.delegate.budget.${key}: expected positive integer`);
+        else Object.assign(out.budget, { [key]: n });
+      }
+    }
+  }
+  return out;
+}
+/** A concrete repository path, never a traversal, absolute path or glob. */
+export function repositoryPath(value: unknown): value is string {
+  return typeof value === 'string' && !!value && !/^[\\/]|^[A-Za-z]:|[\\\u0000-\u001f*?\[\]{}]/.test(value) && value.split('/').every(p => !!p && p !== '.' && p !== '..');
 }
 
 /** MT1 (0.21): `drive.merge_batch` (integer 1..8) next to the other drive keys; kept out of the parsed plan unless set. */
