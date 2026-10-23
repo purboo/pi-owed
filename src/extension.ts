@@ -2,8 +2,8 @@ import { registeredDrivers, sessionIdentity, ownsDriver } from './registry.ts';
 import { alreadyRecordedText } from './identical-acts.ts';
 import { idleWake } from './watchdog.ts';
 import { withWritesSyntax, planWritesSyntax } from './writes.ts';
-import { readFile, stat } from 'node:fs/promises';
-import { isAbsolute, resolve } from 'node:path';
+import { readFile, stat, mkdir, writeFile } from 'node:fs/promises';
+import { isAbsolute, resolve, join, dirname } from 'node:path';
 import { isMainThread } from 'node:worker_threads';
 import { remoteAPI } from './ext-worker.ts';
 // Pi provides schemas via its loader. Native workers need only the registered callbacks,
@@ -24,12 +24,16 @@ import { renderSweep, unguardedText } from './sweep.ts';
 import { selftestPreview } from './checktry.ts';
 import { leaseText } from './lease.ts';
 import { driveOnce, liveRunLines } from './drive-run.ts';
-import { DriveWatch, driveDir, readLock, driveStart, driveStatus, driveStop, driverLine, readyHint, readyHintText, renderDriveStart, renderDriveStatus, renderDriveStop, revalidator } from './drive-bg.ts';
+import { DriveWatch, driveDir, readLock, driveStart, driveStatus, driveStop, driverLine, readyHint, readyHintText, renderDriveStart, renderDriveStatus, renderDriveStop, revalidator, type DelegateWake } from './drive-bg.ts';
+import { Delegate, type DelegatePlan, type DelegateStage } from './watch.ts';
 import { parentOverlapWarnings } from './parentops.ts';
 import { allowanceLabel, amendLines, carryLine, notCarriedLine, oneLine, recordedPlanLine, renderBrief, renderEntry, renderGc, renderReceipt, renderWhy, renderReport, renderStatus, renderStatusBrief, waiverRecordedText, measuredPendingText } from './views.ts';
 import { withQuestionPointers } from './needs.ts';
+import { Dsa } from './dsa.ts';
+import { stageId, stageClosed, aActAllowed } from './stage.ts';
 import { sha256 } from './canon.ts';
 import type { EscapeClass, Principal, Role } from './types.ts';
+import type { AAct } from './types.ts';
 
 const as = Type.Optional(Type.String({ pattern: '^(owner|parent|writer|reviewer|executor):.+$', description: 'Principal role:id; parent defaults to parent:pi.' }));
 const cwd = Type.Optional(Type.String({ minLength: 1, description: 'Absolute path of a directory inside the target repository; defaults to the session working directory.' }));
@@ -124,6 +128,70 @@ async function currentPlan(dir: string) {
   if (!law || (law.kind !== 'plan' && law.kind !== 'genesis')) throw new OwedError('Missing plan');
   return withWritesSyntax(parsePlan((await ledger.getBlob(law.plan)).toString()),law.writes_syntax ?? 1);
 }
+// ---------- DL: the delegate of a repository ----------
+/**
+ * DL1: the delegate facts of a repository: the plan's delegate block, the ledger head seq the fork reads through, the
+ * sha256 of the plan file the fork works against and the A acts a fork may use now. Undefined: the plan has no
+ * delegate block, so nothing is delegated (0.32.0 behavior).
+ */
+async function delegateFacts(repo: string): Promise<DelegatePlan | undefined> {
+  // DL4: inside a dsa call (a subagent) nothing is delegated; the wakes are delivered exactly as in 0.32.0.
+  if (process.env.DSA_CALL || process.env.DSA_EXEC) return undefined;
+  try {
+    const ledger = await Ledger.open(repo), entries = await ledger.read();
+    const law = entries.findLast(e => (e.kind === 'plan' || e.kind === 'genesis'));
+    if (!law || (law.kind !== 'plan' && law.kind !== 'genesis')) return undefined;
+    const plan = withWritesSyntax(parsePlan((await ledger.getBlob(law.plan)).toString()), law.writes_syntax ?? 1);
+    const delegate = plan.drive?.delegate;
+    if (!delegate || !delegate.on?.length) return undefined;
+    const seq = entries.length ? entries.at(-1)!.seq : 0;
+    // The plan sha256 is the sha256 of the plan file the fork patches (its `before_sha256`); without a recorded path
+    // it is the sha256 of the recorded plan blob.
+    let planSha = law.plan;
+    if (law.path) planSha = await readFile(resolve(await git.repoRoot(repo), law.path), 'utf8').then(sha256).catch(() => law.plan);
+    const aActs = (delegate.a_acts ?? []).filter(kind => aActAllowed(entries, plan, kind as AAct));
+    return { on: delegate.on as DelegatePlan['on'], max: delegate.max, ...(delegate.budget ? { budget: delegate.budget } : {}), aActs, seq, planSha };
+  } catch { return undefined; }
+}
+/** DL1: the dsa client that launches the exact forks of a repository (one per session; the binary is probed once). */
+const delegateClients = new Map<string, Dsa>();
+function delegateClient(repo: string, session: string | undefined): Dsa | undefined {
+  if (!session) return undefined;
+  const key = `${repo}\u0000${session}`;
+  let client = delegateClients.get(key);
+  if (!client) { client = new Dsa({ cwd: repo, session }); delegateClients.set(key, client); }
+  return client;
+}
+/** DL2: the open stages of a repository: the fork that staged one is reported with its class, summary and evidence count. */
+async function delegateStages(repo: string): Promise<DelegateStage[]> {
+  try {
+    const ledger = await Ledger.open(repo), entries = await ledger.read();
+    const out: DelegateStage[] = [];
+    for (const e of entries) {
+      if (e.kind !== 'stage') continue;
+      if (stageClosed(entries, e)) continue;
+      let evidence = 0;
+      try {
+        const bundle = JSON.parse((await ledger.getBlob(e.bundle)).toString()) as { evidence?: unknown[] };
+        evidence = Array.isArray(bundle.evidence) ? bundle.evidence.length : 0;
+      } catch { /* an unreadable bundle has no evidence count */ }
+      out.push({ id: stageId(e.seq), node: e.node, class: e.class, summary: e.summary, evidence, seq: e.seq, by: e.by });
+    }
+    return out;
+  } catch { return []; }
+}
+/** DL3: the pending forks of a repository, kept across a session quit (so a wake is never lost). */
+async function delegateStore(repo: string, list?: { wake: DelegateWake; id: string }[]): Promise<{ wake: DelegateWake; id: string }[]> {
+  const file = join(await driveDir(repo), 'drive', 'delegate.json');
+  if (list === undefined) {
+    try { const parsed = JSON.parse(await readFile(file, 'utf8')) as unknown; return Array.isArray(parsed) ? parsed as { wake: DelegateWake; id: string }[] : []; } catch { return []; }
+  }
+  try {
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, JSON.stringify(list), 'utf8');
+  } catch { /* the store is best effort: a lost store only loses a wake the driver repeats */ }
+  return list;
+}
 /** Writer of the open slot of node when dir is inside that slot worktree (submit and rebase infer it). */
 async function slotWriter(dir: string, id: string): Promise<string | undefined> {
   const slot = (await ops.status({ cwd: dir })).nodes[id]?.slot;
@@ -183,7 +251,42 @@ export default function owed(pi: ExtensionAPI): void {
       return agent.session === session && (held.state !== 'live' && held.state !== 'foreign' || ownsDriver(repo, held.owner, session));
     } });
   };
-  const makeWatch = () => new DriveWatch(content => pi.sendMessage({ customType: 'owed-drive', display: true, content: withQuestionPointers(content) }, { triggerTurn: true, deliverAs: 'followUp' }), 0, { busy, session: () => agent.session, revalidate: repo => revalidator({ cwd: repo }) });
+  // DL1-DL4: the delegates of the repositories this session follows (one per repository, like the followers).
+  const delegates = new Map<string, Delegate>();
+  const makeWatch = () => new DriveWatch(content => pi.sendMessage({ customType: 'owed-drive', display: true, content: withQuestionPointers(content) }, { triggerTurn: true, deliverAs: 'followUp' }), 0, { busy, session: () => agent.session, revalidate: repo => revalidator({ cwd: repo }), divert: repo => async (wakes: DelegateWake[]) => { const d = delegateFor(repo); const left = await d.take(wakes); return wakes.filter(w => !left.includes(w)).map(w => w.id); } });
+  /** The delegate of a repository: the facts it needs, the dsa client it forks with and where its state lives. */
+  const makeDelegate = (repo: string): Delegate => new Delegate({
+    facts: () => delegateFacts(repo),
+    session: () => agent.session,
+    supported: async () => { const client = delegateClient(repo, agent.session); return client ? client.supportsOriginSession() : false; },
+    launch: async (l) => {
+      const client = delegateClient(repo, agent.session);
+      if (!client) return { ok: false, reason: 'no pi session for the exact fork' };
+      // The run is owned by the session that follows the driver (`--session`) and pins its capture (`--origin-session`).
+      const r = await client.run(l.id, JSON.stringify(l.spec), l.labels, repo, agent.session);
+      if (r.outcome === 'applied') return { ok: true, id: l.id, wid: r.wid };
+      return { ok: false, reason: r.outcome === 'pending' ? 'dsa is pending' : r.outcome === 'conflict' ? 'dsa request-conflict' : `dsa refused: ${r.reason ?? 'rejected'}` };
+    },
+    inspect: async (id) => {
+      const client = delegateClient(repo, agent.session);
+      if (!client) return { state: 'absent' };
+      const r = await client.inspect(id).catch(() => undefined);
+      if (!r) return { state: 'running' };
+      return { state: r.view.state, ...(r.view.status ? { status: r.view.status } : {}), ...(r.view.error ? { error: r.view.error } : {}), ...(r.exact ? { exact: r.exact } : {}) };
+    },
+    stages: () => delegateStages(repo),
+    deliver: (content) => { pi.sendMessage({ customType: 'owed-delegate', display: true, content: withQuestionPointers(content) }, { triggerTurn: true, deliverAs: 'followUp' }); },
+    store: {
+      load: () => delegateStore(repo).then(list => list as { wake: DelegateWake; id: string }[]),
+      save: async (list) => { await delegateStore(repo, list); },
+    },
+  });
+  /** The delegate of a repository: it takes the node wakes its plan delegates and forks them exactly. */
+  const delegateFor = (repo: string): Delegate => {
+    let d = delegates.get(repo);
+    if (!d) { d = makeDelegate(repo); delegates.set(repo, d); }
+    return d;
+  };
   let idleWatch = makeIdle(), watch = makeWatch(), registryAt = -Infinity;
   const useContext = (ctx: ExtensionContext) => {
     const session = sessionIdentity(ctx);
@@ -204,14 +307,39 @@ export default function owed(pi: ExtensionAPI): void {
     registryAt = Date.now();
     for (const r of registeredDrivers()) if (r.session === agent.session) await attachDriver(r.repo);
   };
+  /** DL3: the session quits: the pending forks are kept and their wakes are handed back when the session follows again. */
+  const quitDelegates = async () => {
+    for (const d of [...delegates.values()]) { try { await d.quit(); } catch { /* the store is best effort */ } }
+  };
+  /** DL2: the forks that settled since the last poll are reported as one batched message. */
+  const pollDelegates = async () => {
+    for (const [repo, d] of [...delegates]) {
+      try { await d.poll(); } catch { /* a failed poll is retried at the next tick */ }
+      if (!delegates.has(repo)) continue;
+    }
+  };
+  /**
+   * DL3: the session follows the driver again: the wakes a previous session left pending are handed back, before
+   * the follower replays the driver log (a replayed wake must not be forked a second time).
+   */
+  const restoreDelegates = async (dirs: string[] = []) => {
+    const repos = new Set<string>();
+    for (const dir of dirs) repos.add(await git.mainRoot(dir).catch(() => dir));
+    for (const r of registeredDrivers()) if (r.session === agent.session) repos.add(r.repo);
+    for (const repo of repos) {
+      const d = delegateFor(repo);
+      try { await d.restore(); } catch { /* the wake stays in the driver log and is read again */ }
+    }
+  };
   if (typeof pi.on === 'function') {
     // Internal worker tick: the timer lives in pi, all log/git/replay work lives here.
-    (pi.on as (name: string, handler: (_event: unknown, ctx: ExtensionContext) => Promise<unknown>) => unknown)('owed_tick', async (_event, ctx) => { useContext(ctx); await attachSessionDrivers(); await watch.flush(); await idleWatch.flush(); });
+    (pi.on as (name: string, handler: (_event: unknown, ctx: ExtensionContext) => Promise<unknown>) => unknown)('owed_tick', async (_event, ctx) => { useContext(ctx); await restoreDelegates([ctx.cwd]); await attachSessionDrivers(); await watch.flush(); await idleWatch.flush(); await pollDelegates(); });
     pi.on('agent_start', (_event, ctx) => { useContext(ctx); agent.running = true; });
-    pi.on('agent_settled', async (_event, ctx) => { useContext(ctx); agent.running = false; await watch.flush(); await idleWatch.flush(); });
+    pi.on('agent_settled', async (_event, ctx) => { useContext(ctx); agent.running = false; await watch.flush(); await idleWatch.flush(); await pollDelegates(); });
     // SN: cwd and tool use are not subscriptions; only the driver's owning top-level session follows.
-    pi.on('session_start', async (_event, ctx) => { useContext(ctx); await attachDriver(ctx.cwd); await attachSessionDrivers(); });
-    pi.on('session_shutdown', () => { watch.stopAll(); idleWatch.stopAll(); for (const c of genesisRuns) c.abort(); });
+    // DL3: the store is restored before the follower attaches, so a replayed wake line is not forked a second time.
+    pi.on('session_start', async (_event, ctx) => { useContext(ctx); await restoreDelegates([ctx.cwd]); await attachDriver(ctx.cwd); await attachSessionDrivers(); });
+    pi.on('session_shutdown', () => { watch.stopAll(); idleWatch.stopAll(); for (const c of genesisRuns) c.abort(); void quitDelegates(); });
   }
   const core = new Set(['status', 'why', 'decide', 'drive', 'start', 'submit', 'review']);
   const allTools = process.env.OWED_TOOLS?.trim() === 'all';
