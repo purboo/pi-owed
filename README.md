@@ -1,6 +1,6 @@
 # pi-owed
 
-**No receipt, not done.** Owed is an acceptance ledger for multi-agent task graphs in one Git repository: measured checks, independent reviews, owner waivers and remaining debt guard each merge. The runner does the work; owed records acceptance, not promises. Current release: **[0.31.2](CHANGELOG.md)**.
+**No receipt, not done.** Owed is an acceptance ledger for multi-agent task graphs in one Git repository: measured checks, independent reviews, owner waivers and remaining debt guard each merge. The runner does the work; owed records acceptance, not promises. Current release: **[0.33.0](CHANGELOG.md)**.
 
 Why use it?
 - Keep completion tied to a merge receipt, not an agent's success message.
@@ -445,6 +445,40 @@ After answer delivery, `owed answer`/`owed decide` and their tools report the
 answered call's observed state, including queued, still asking, asking again,
 sealed or unknown. A describe failure never resends; a retry without the
 original question's call address reports unknown (SPEC §12.5.1).
+
+`owed question <node> [qid] [--json]` prints the node's open writer questions
+unclipped: decision, numbered options with label/scope/cost/risk/preferred,
+facts, tried, classification candidates, question text, call address, qid/rev
+and the answer command. A qid may be a prefix (driver lines show its first
+eight characters). It is a read: no principal, no ledger write. Wakes and
+`owed why` lines that clip a question end with `→ owed question <node> [<qid>]`.
+
+### Transient dsa reads and newer generations (0.33)
+
+Read-only dsa calls the driver makes (describe, status, leases, the `--help`
+feature probe) are retried up to three more times, after 1 s, 3 s and 9 s,
+when they time out or end by a signal; a non-zero exit is not retried. A read
+that still fails is transient: the driver logs one line
+`dsa read unavailable: <call>: <reason>` per failure streak, records no halt and
+decides the action again on a later pass. Only a read that has failed
+continuously for 10 minutes halts the node with
+`dsa reads failing for 10 min: <call>: <last error>`. The read timeout is
+15000 ms, overridable with `OWED_DSA_SHORT_MS` (an integer 1000-120000; any
+other value is ignored with one warning line). Write calls (run, send, stop)
+keep their timeouts. One-shot reads outside the driver keep a single attempt.
+
+Before the driver halts on an attest error (failed status read, lost response,
+unknown seal), it reads the ledger: when observations recorded after the attest
+started cover every obligation it was measuring, the driver continues from
+them as if the attest had returned and logs
+`attest result taken from ledger #<seqs>`.
+
+Before a halt or a new repair follow-up decided from a sealed writer, the
+driver describes the writer again. When a newer generation is running, queued
+or asking, it does neither and logs `waiting: <call> generation <n> is running`.
+A driver halt recorded for an older generation while a newer one runs is shown
+in `owed status` and `owed why` as
+`stale halt: generation <n> is running (<call>)`.
 
 ### Quiet output and evidence
 
@@ -915,6 +949,104 @@ reviews use `--rank 3`; other ranks are refused with that instruction.
 
 owed 0.7.x cannot read a ledger with a `resume` entry: upgrade the CLI, the
 pi extension and every driver together.
+
+### Staged decisions and delegate forks (0.33)
+
+A stage is a decision prepared by someone else for the parent to accept with
+one command. Anyone may stage, including a writer or a fork inside a dsa call:
+
+```bash
+owed stage <node> --file BUNDLE.json        # pi: owed_stage {node, file}
+owed stages [--all] [--json]                # pi: owed_stages
+owed accept S<n> [--amend TEXT]             # pi: owed_accept (parent or owner)
+owed accept --all-b                         # every open, non-stale class-B stage in order
+owed reject S<n> --note TEXT                # pi: owed_reject
+owed overturn <seq> --note TEXT             # pi: owed_overturn
+```
+
+The bundle is JSON with exactly these fields (an unknown field refuses):
+`ruling_text` (required, at most 8000 chars), `decide` (optional `owed_decide`
+parameters `nodes`, `writes`, `resume`, `expect`, `writer`, `allow_only`,
+`after`, `remeasure`; never `defer`), `plan_patch` (optional
+`{file, before_sha256, after_sha256, self_check?}`, `file` being a complete
+patched copy of the plan file), `appends` (optional `[{path, text}]`, paths
+listed in `drive.delegate.appends`, `{ruling}` replaced by the ruling seq),
+`evidence` (optional `[{path, sha256}]`), `read_through_seq` (required, the
+highest ledger seq read), `touches` (optional node ids and repository paths),
+`class` (`A`, `B` or `C`, default `B`) and `summary` (required, at most 10
+lines of 160 chars). Staging verifies the node, the seq, both plan hashes,
+that the patched plan parses, and the evidence hashes; plan and evidence paths
+must stay inside the repository. Any failure records nothing. The stage id is
+`S<seq>`.
+
+A stage stays open until accepted or rejected; it is stale when a later ledger
+entry changes the facts of its node or a touched node (halt, submit, review,
+ruling, resume, abandon, merge, a measured observation, a plan change of that
+node, ...), when the node's open writer questions changed, or when the plan
+file no longer has the patch's `before_sha256`. `owed accept` refuses a stale
+stage (`stage S<n> is stale: <reason> — fork again`) and a stage overlapping an
+older open stage (`accept S<m> first or reject it`); if the open questions
+cannot be read it refuses as retryable and records nothing. Otherwise it
+applies, in one ledger append, the patched plan (note `accept S<n>`, same
+authority and downgrade rules as `owed plan`), the decision or a plain ruling
+(text = `--amend` or `ruling_text`, suffixed ` [stage S<n>]`) and the `accept`
+entry, then the appends, each prefixed by `<!-- owed S<n> -->`. The output
+leads with `accepted S<n>: ruling #<seq>`. A retry after a crash is safe: a plan
+file already equal to the patched bytes continues, and an append whose marker
+is present is skipped. Status shows `Stages: <n> open (<k> stale) → owed stages`
+and `owed why <node>` lists the node's open stages.
+
+The optional plan mapping `drive.delegate` (unknown keys refuse) turns wakes
+into exact forks of the session that follows the driver:
+
+```yaml
+drive:
+  delegate:
+    on: [question, writer-stop, review-asks, infra-halt, needs-owner]
+    max: 4                               # 1-16, default 4
+    budget: { rounds: 3, wall_s: 900 }
+    a_acts: [preferred-answer, infra-resume]   # default none
+    appends: [docs/decisions.md]          # paths a stage may append to
+```
+
+When `on` lists a wake's kind, the extension launches one fork for the node
+(`dsa run --origin-session <pi session id>`, agent `delegate`,
+`context: "exact"`, run labels `owed_fork=<node>` and `owed_wake=<wake id>`)
+instead of taking the wake as a turn. dsa call budgets take tokens or cost, so
+`wall_s` becomes the call timeout and `rounds` is stated in the fork's packet.
+The packet gives the wake text, the ledger seq to read through, the plan
+sha256 and the enabled A acts; the fork rereads the node's ledger entries,
+stages, and stops. At most `max` forks run at once; later wakes queue in order.
+A node has at most one fork: while its fork runs, or while a stage made by one
+of its forks is open (not accepted and not rejected), a further wake of that
+node is not forked but delivered as a normal turn. A stage that is only stale
+still blocks until it is rejected. When forks end, one `owed delegate:` message
+lists each stage (summary, class, evidence count, `owed accept S<n>`, the dsa
+`exact:` line) and adds `owed accept --all-b` when more than one class-B stage
+is open; a fork that ended without a stage returns the original wake text with
+one line naming the fork call and why. A launch refusal delivers the original
+wake at once; forks pending when the session quits are delivered as their
+original wakes when the session follows the driver again, never forked twice.
+Without `drive.delegate`, without a pi session id, inside a dsa call, or with a
+dsa that does not accept `--origin-session` (pi-durable-subagents < 1.3.0),
+every wake is delivered as in 0.32.0.
+
+A fork may stage for any node. On its own node it may also perform the A acts
+`a_acts` enables: `preferred-answer` (answer its open writer question with the
+option the writer marked preferred) and `infra-resume` (resume from a dsa read
+or attest infrastructure halt when the ledger holds the measurements). They
+are recorded as the owner act they are, with `via: "fork:<call>"`. Every other
+parent or owner act stays refused for a fork, with a message naming
+`owed stage`. `owed overturn <seq> --note TEXT` disables that A act kind until
+a later plan lists it again in `a_acts`.
+
+The recording pi tools (decide, answer, resume, plan, edit, amend, rule, stage,
+accept) retry once after an optimistic-concurrency refusal (`changed; retry`
+or busy) and then start with `retried once after: <first refusal>`. `owed_plan`,
+`owed_edit` and `owed_amend` end with
+`recorded plan #<seq> blob <sha> file sha256 <sha>`. `owed plan` refuses with
+`plan file changed; retry` when the plan file changed between reading and the
+ledger lock.
 
 ### Atomic edits and attempt recovery
 
