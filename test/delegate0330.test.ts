@@ -37,6 +37,7 @@ function harness(o: { plan?: DelegatePlan; session?: string } = {}): Harness {
   h.delegate = new Delegate({
     facts: async () => h.plan,
     session: () => h.session,
+    supported: async () => true,
     launch: async (l) => {
       launches.push(l);
       if (!h.launches_ok) return { ok: false, reason: 'request-conflict' };
@@ -59,7 +60,7 @@ const wake = (node: string, kind: DelegateKind = 'question', text = `Needs you: 
   ({ node, kind, text, id: `${node}:${kind}:${text}` });
 
 test('DL1: a delegatable wake becomes one exact fork with the origin session, labels and no model', async () => {
-  const h = harness({ plan: { on: ['question'], max: 4, budget: { rounds: 3, wall_s: 90 }, aActs: ['preferred-answer'] } });
+  const h = harness({ plan: { on: ['question'], max: 4, budget: { rounds: 3, wall_s: 90 }, aActs: ['preferred-answer'], seq: 12, planSha: 'abc123' } });
   const rest = await h.delegate.take([wake('a')]);
   assert.deepEqual(rest, [], 'the delegated wake is not delivered as a turn');
   assert.equal(h.launches.length, 1);
@@ -75,7 +76,7 @@ test('DL1: a delegatable wake becomes one exact fork with the origin session, la
 });
 
 test('DL1: the fork task is a packet with the node, the wake, the seq, the plan sha, the A acts and the rules', async () => {
-  const h = harness({ plan: { on: ['question'], max: 4, aActs: ['preferred-answer', 'infra-resume'] } });
+  const h = harness({ plan: { on: ['question'], max: 4, aActs: ['preferred-answer', 'infra-resume'], seq: 12, planSha: 'abc123' } });
   await h.delegate.take([wake('a', 'question', 'Needs you: a — decide')]);
   const task = String(h.launches[0]!.spec.task);
   for (const part of ['a', 'Needs you: a — decide', 'read_through_seq', 'plan sha256', 'preferred-answer', 'infra-resume', 'owed stage', 'never fork', 'dsa command calls', 'stop after staging']) {
@@ -84,10 +85,10 @@ test('DL1: the fork task is a packet with the node, the wake, the seq, the plan 
 });
 
 test('DL1: one fork per node, later wakes queue in order', async () => {
-  const h = harness({ plan: { on: ['question'], max: 4, aActs: [] } });
+  const h = harness({ plan: { on: ['question'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
   await h.delegate.take([wake('a'), wake('b')]);
   assert.equal(h.launches.length, 2);
-  await h.delegate.take([wake('a')]);
+  await h.delegate.take([wake('a', 'question', 'Needs you: a — decide the second question')]);
   assert.equal(h.launches.length, 2, 'a second wake for a running node is queued, not forked');
   h.state.set(h.launches[0]!.id, { state: 'sealed', status: 'ok' });
   await h.delegate.poll();
@@ -96,7 +97,7 @@ test('DL1: one fork per node, later wakes queue in order', async () => {
 });
 
 test('DL1: at most max forks run at once', async () => {
-  const h = harness({ plan: { on: ['question'], max: 1, aActs: [] } });
+  const h = harness({ plan: { on: ['question'], max: 1, aActs: [], seq: 12, planSha: 'abc123' } });
   await h.delegate.take([wake('a')]);
   await h.delegate.take([wake('b')]);
   assert.equal(h.launches.length, 1, 'the second fork waits for a slot');
@@ -106,7 +107,7 @@ test('DL1: at most max forks run at once', async () => {
 });
 
 test('DL1: a wake whose kind is not delegated is delivered as a turn', async () => {
-  const h = harness({ plan: { on: ['question'], max: 4, aActs: [] } });
+  const h = harness({ plan: { on: ['question'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
   const rest = await h.delegate.take([wake('a', 'writer-stop')]);
   assert.equal(rest.length, 1);
   assert.equal(h.launches.length, 0);
@@ -120,7 +121,7 @@ test('DL1: without drive.delegate every wake is delivered as a turn', async () =
 });
 
 test('DL2: a settled fork is reported once, with its stage, the accept command and the exact facts', async () => {
-  const h = harness({ plan: { on: ['question'], max: 4, aActs: [] } });
+  const h = harness({ plan: { on: ['question'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
   await h.delegate.take([wake('a')]);
   const id = h.launches[0]!.id;
   h.staged.set(id, { id: 'S7', node: 'a', class: 'B', summary: 'Keep the scoped interface', evidence: 2 });
@@ -137,7 +138,7 @@ test('DL2: a settled fork is reported once, with its stage, the accept command a
 });
 
 test('DL2: several settled forks are reported in one batched message', async () => {
-  const h = harness({ plan: { on: ['question'], max: 4, aActs: [] } });
+  const h = harness({ plan: { on: ['question'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
   await h.delegate.take([wake('a'), wake('b')]);
   h.staged.set(h.launches[0]!.id, { id: 'S1', node: 'a', class: 'B', summary: 'First', evidence: 1 });
   h.staged.set(h.launches[1]!.id, { id: 'S2', node: 'b', class: 'C', summary: 'Second', evidence: 0 });
@@ -150,7 +151,7 @@ test('DL2: several settled forks are reported in one batched message', async () 
 });
 
 test('DL2: a fork that ended without a stage is reported with its original wake and the reason', async () => {
-  const h = harness({ plan: { on: ['question'], max: 4, aActs: [] } });
+  const h = harness({ plan: { on: ['question'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
   await h.delegate.take([wake('a', 'question', 'Needs you: a — decide the run’s open question')]);
   const id = h.launches[0]!.id;
   h.state.set(id, { state: 'sealed', status: 'failed', error: 'budget exhausted' });
@@ -161,8 +162,38 @@ test('DL2: a fork that ended without a stage is reported with its original wake 
   assert.match(text, /no stage/i);
 });
 
+test('DL1: the plan budget bounds the call (wall_s) and states the rounds in the packet', async () => {
+  const h = harness({ plan: { on: ['question'], max: 4, budget: { rounds: 3, wall_s: 90 }, aActs: [], seq: 12, planSha: 'abc123' } });
+  await h.delegate.take([wake('a')]);
+  const launch = h.launches[0]!;
+  assert.equal(launch.spec.timeoutMs, 90_000, 'the wall budget bounds the dsa call');
+  assert.equal(launch.spec.budget, undefined, 'dsa budgets take tokens or cost only; the plan budget is not passed verbatim');
+  assert.match(String(launch.spec.task), /3 round/, 'the rounds of work are stated in the packet');
+  assert.match(String(launch.spec.task), /90 s/, 'the wall budget is stated in the packet');
+});
+
+test('DL2: more than one open class-B stage adds the owed accept --all-b line', async () => {
+  const h = harness({ plan: { on: ['question'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
+  await h.delegate.take([wake('a'), wake('b')]);
+  h.staged.set(h.launches[0]!.id, { id: 'S1', node: 'a', class: 'B', summary: 'First', evidence: 1 });
+  h.staged.set(h.launches[1]!.id, { id: 'S2', node: 'b', class: 'B', summary: 'Second', evidence: 1 });
+  h.state.set(h.launches[0]!.id, { state: 'sealed', status: 'ok' });
+  h.state.set(h.launches[1]!.id, { state: 'sealed', status: 'ok' });
+  await h.delegate.poll();
+  assert.match(h.delivered[0]!, /owed accept --all-b/);
+});
+
+test('DL2: one open class-B stage does not add the all-b line', async () => {
+  const h = harness({ plan: { on: ['question'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
+  await h.delegate.take([wake('a')]);
+  h.staged.set(h.launches[0]!.id, { id: 'S1', node: 'a', class: 'B', summary: 'First', evidence: 1 });
+  h.state.set(h.launches[0]!.id, { state: 'sealed', status: 'ok' });
+  await h.delegate.poll();
+  assert.doesNotMatch(h.delivered[0]!, /owed accept --all-b/);
+});
+
 test('DL3: a launch refusal delivers the original wake at once', async () => {
-  const h = harness({ plan: { on: ['question'], max: 4, aActs: [] } });
+  const h = harness({ plan: { on: ['question'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
   h.launches_ok = false;
   const rest = await h.delegate.take([wake('a')]);
   assert.equal(rest.length, 1, 'the refused wake is delivered as a turn');
@@ -170,7 +201,7 @@ test('DL3: a launch refusal delivers the original wake at once', async () => {
 });
 
 test('DL3: wakes queued or in flight when the session quits are delivered as their original wakes', async () => {
-  const h = harness({ plan: { on: ['question'], max: 1, aActs: [] } });
+  const h = harness({ plan: { on: ['question'], max: 1, aActs: [], seq: 12, planSha: 'abc123' } });
   await h.delegate.take([wake('a')]);
   await h.delegate.take([wake('b')]);
   const handed = await h.delegate.quit();
@@ -179,7 +210,7 @@ test('DL3: wakes queued or in flight when the session quits are delivered as the
 });
 
 test('DL4: without a session id the wake is delivered as a turn', async () => {
-  const h = harness({ plan: { on: ['question'], max: 4, aActs: [] } });
+  const h = harness({ plan: { on: ['question'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
   h.session = undefined;
   const rest = await h.delegate.take([wake('a')]);
   assert.equal(rest.length, 1);
@@ -190,13 +221,14 @@ test('DL4: an older dsa without --origin-session delivers the wake as a turn', a
   const dir = await mkdtemp(join(tmpdir(), 'owed-delegate-old-'));
   try {
     await writeFile(join(dir, 'old-origin'), '');
-    const h = harness({ plan: { on: ['question'], max: 4, aActs: [] } });
+    const h = harness({ plan: { on: ['question'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
     // The dsa client reports the missing option; the delegate then delivers the wake as a turn.
     const { Dsa } = await import('../src/dsa.ts');
     const dsa = new Dsa({ bin: FAKE, env: { FAKE_DSA_DIR: dir }, waitMs: 1000, timeoutMs: 20_000 });
     const delegate = new Delegate({
       facts: async () => h.plan,
       session: () => h.session,
+      supported: async () => dsa.supportsOriginSession(),
       launch: async (l) => {
         const r = await dsa.run(l.id, JSON.stringify(l.spec), l.labels, dir);
         return r.outcome === 'applied' ? { ok: true, id: l.id } : { ok: false, reason: 'refused' };
@@ -221,11 +253,17 @@ test('DL: a fork call is described through its call address, not through describ
     const dsa = new Dsa({ bin: FAKE, env: { FAKE_DSA_DIR: dir }, waitMs: 1000, timeoutMs: 20_000 });
     const r = await dsa.run('fork-run-1', JSON.stringify({ agent: 'delegate', task: 't', context: 'exact' }), { owed_fork: 'a' }, dir);
     assert.equal(r.outcome, 'applied');
-    const prior = process.env.DSA_CALL;
+    const prior = process.env.DSA_CALL, priorBin = process.env.OWED_DSA, priorDir = process.env.FAKE_DSA_DIR;
     process.env.DSA_CALL = '01M5KDEKNC2C7P5B9WGEN8KY6A@1/tasks:0@1';
+    process.env.OWED_DSA = FAKE;
+    process.env.FAKE_DSA_DIR = dir;
     try {
       const fork = await forkPrincipal(dir);
       assert.deepEqual(fork, { node: 'a', call: '01M5KDEKNC2C7P5B9WGEN8KY6A@1/tasks:0@1' });
-    } finally { if (prior === undefined) delete process.env.DSA_CALL; else process.env.DSA_CALL = prior; }
+    } finally {
+      if (prior === undefined) delete process.env.DSA_CALL; else process.env.DSA_CALL = prior;
+      if (priorBin === undefined) delete process.env.OWED_DSA; else process.env.OWED_DSA = priorBin;
+      if (priorDir === undefined) delete process.env.FAKE_DSA_DIR; else process.env.FAKE_DSA_DIR = priorDir;
+    }
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

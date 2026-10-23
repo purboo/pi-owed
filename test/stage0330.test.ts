@@ -217,7 +217,8 @@ test('SG5: reject, CLI listing, status, why and tools expose actionable stages',
 test('SG6/SG7: fork describes once; preferred writer option only, cross-node and other parent acts refused',async t=>{
   const f=await fixture();try{
     await f.slot();const rid=await f.launch();f.dsa.ask(rid);let describes=0;const describe=Dsa.prototype.describe;
-    t.mock.method(Dsa.prototype,'describe',async function(this:Dsa,key:string){if(key==='fork-preferred'){describes++;return {rid:key,state:'running',labels:{owed_fork:'a'}} as RunView;}return f.dsa.describe(key);});
+    // Ruling #4021: a fork principal is resolved through `describe <wid> --json` (a call address is no request id).
+    t.mock.method(Dsa.prototype,'describeCall',async function(this:Dsa,call:string){if(call==='fork-preferred'){describes++;return {rid:call,state:'running',labels:{owed_fork:'a'}} as RunView;}return f.dsa.describe(call);});
     await env({DSA_CALL:'fork-preferred'},async()=>{
       const a=await ops.answer({...f.actor,node:'a',text:'option 1; preserve behavior'});assert.equal(a.entry.by,'owner:pi');assert.equal(a.entry.via,'fork:fork-preferred');assert.equal(a.entry.writer,false);
       await assert.rejects(ops.answer({...f.actor,node:'b',text:'option 1'}),/owed stage/);
@@ -254,7 +255,7 @@ test('SG6: CLI and pi permit fork stage and enabled A act, refuse ordinary paren
 test('SG7: overturn disables preferred-answer until a later plan explicitly re-lists it',async t=>{
   const f=await fixture();try{
     await f.slot();const rid=await f.launch();f.dsa.ask(rid);
-    t.mock.method(Dsa.prototype,'describe',async(key:string)=>key==='fork-overturn'?{rid:key,state:'running',labels:{owed_fork:'a'}} as RunView:f.dsa.describe(key));
+    t.mock.method(Dsa.prototype,'describeCall',async(key:string)=>key==='fork-overturn'?{rid:key,state:'running',labels:{owed_fork:'a'}} as RunView:f.dsa.describe(key));
     let seq=0;await env({DSA_EXEC:'fork-overturn'},async()=>{seq=(await ops.answer({...f.actor,node:'a',text:'option 1'})).entry.seq;});
     const over=await ops.overturn({...f.actor,seq,note:'This option was wrong'});assert.match(renderStatus(await ops.status(f)),new RegExp(`A act preferred-answer disabled by overturn #${over.seq}`));
     f.dsa.ask(rid,'q2',1);await env({DSA_EXEC:'fork-overturn'},async()=>{await assert.rejects(ops.answer({...f.actor,node:'a',text:'option 1'}),/not enabled/);});
@@ -267,7 +268,7 @@ test('SG7: overturn disables preferred-answer until a later plan explicitly re-l
 test('SG7: infra-resume requires enabled own-node infrastructure halt and complete measurements',async t=>{
   const f=await fixture();try{
     await f.slot('b',true);const s=(await ops.readState(f)).state,c=s.nodes.b!.candidate!;
-    t.mock.method(Dsa.prototype,'describe',async(key:string)=>({rid:key,state:'running',labels:{owed_fork:'b'}} as RunView));
+    t.mock.method(Dsa.prototype,'describeCall',async(key:string)=>({rid:key,state:'running',labels:{owed_fork:'b'}} as RunView));
     await ops.halt({cwd:f.cwd,as:parent,node:'b',attempt:1,reason:'attest infrastructure error: unknown seal',needs:'human'});
     await env({DSA_CALL:'fork-infra'},async()=>{await assert.rejects(ops.resume({...f.actor,node:'b'}),/covering ledger measurements/);});
     await record(f.cwd,{kind:'obs',by:'executor:owed',subject:'b',obligation:'writes',key:c.keys.writes!,verdict:'pass',exit:0,durationMs:1,commit:c.commit,base:c.base});
