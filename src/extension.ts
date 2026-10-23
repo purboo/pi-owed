@@ -175,7 +175,7 @@ async function delegateStages(repo: string): Promise<DelegateStage[]> {
         const bundle = JSON.parse((await ledger.getBlob(e.bundle)).toString()) as { evidence?: unknown[] };
         evidence = Array.isArray(bundle.evidence) ? bundle.evidence.length : 0;
       } catch { /* an unreadable bundle has no evidence count */ }
-      out.push({ id: stageId(e.seq), node: e.node, class: e.class, summary: e.summary, evidence });
+      out.push({ id: stageId(e.seq), node: e.node, class: e.class, summary: e.summary, evidence, seq: e.seq });
     }
     return out;
   } catch { return []; }
@@ -253,12 +253,6 @@ export default function owed(pi: ExtensionAPI): void {
   };
   // DL1-DL4: the delegates of the repositories this session follows (one per repository, like the followers).
   const delegates = new Map<string, Delegate>();
-  /** The delegate of a repository: it takes the node wakes its plan delegates and forks them exactly. */
-  const delegateFor = (repo: string): Delegate => {
-    let d = delegates.get(repo);
-    if (!d) { d = makeDelegate(repo); delegates.set(repo, d); }
-    return d;
-  };
   const makeWatch = () => new DriveWatch(content => pi.sendMessage({ customType: 'owed-drive', display: true, content: withQuestionPointers(content) }, { triggerTurn: true, deliverAs: 'followUp' }), 0, { busy, session: () => agent.session, revalidate: repo => revalidator({ cwd: repo }), divert: repo => async (wakes: DelegateWake[]) => { const d = delegateFor(repo); const left = await d.take(wakes); return wakes.filter(w => !left.includes(w)).map(w => w.id); } });
   /** The delegate of a repository: the facts it needs, the dsa client it forks with and where its state lives. */
   const makeDelegate = (repo: string): Delegate => new Delegate({
@@ -286,6 +280,12 @@ export default function owed(pi: ExtensionAPI): void {
       save: async (list) => { await delegateStore(repo, list); },
     },
   });
+  /** The delegate of a repository: it takes the node wakes its plan delegates and forks them exactly. */
+  const delegateFor = (repo: string): Delegate => {
+    let d = delegates.get(repo);
+    if (!d) { d = makeDelegate(repo); delegates.set(repo, d); }
+    return d;
+  };
   let idleWatch = makeIdle(), watch = makeWatch(), registryAt = -Infinity;
   const useContext = (ctx: ExtensionContext) => {
     const session = sessionIdentity(ctx);

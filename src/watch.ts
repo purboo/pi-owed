@@ -79,8 +79,8 @@ export interface DelegateForkState {
   /** The exactness facts of the call (dsa 1.3.0). */
   exact?: { mode: string; reason?: string; firstCacheRatio?: number; costUsd?: number };
 }
-/** A stage a fork recorded (the bundle's summary, class and evidence files). */
-export interface DelegateStage { id: string; node: string; class: string; summary: string; evidence: number; }
+/** A stage a fork recorded (the bundle's summary, class and evidence files); `seq` is the ledger seq of the stage. */
+export interface DelegateStage { id: string; node: string; class: string; summary: string; evidence: number; seq?: number; }
 /** The delegate's ports: what it needs from the session, the ledger and dsa. */
 export interface DelegatePorts {
   /** The plan's delegate facts, or undefined when the plan does not delegate. */
@@ -93,7 +93,7 @@ export interface DelegatePorts {
   launch: (l: DelegateLaunch) => Promise<{ ok: true; id: string } | { ok: false; reason: string }>;
   /** The state of a launched fork. */
   inspect: (id: string) => Promise<DelegateForkState>;
-  /** The stages the forks recorded, newest first. */
+  /** The open stages of the repository (the fork's own stage is the one recorded after its launch). */
   stages: () => Promise<DelegateStage[]>;
   /** Deliver a message to the session. */
   deliver: (text: string) => void;
@@ -105,11 +105,10 @@ export interface DelegatePorts {
  * (at most `max` at once, later wakes queue in order), and reports every settled fork as one batched message.
  */
 export class Delegate {
-  private readonly running = new Map<string, { wake: DelegateWake; id: string }>();
+  private readonly running = new Map<string, { wake: DelegateWake; id: string; seq: number }>();
   private readonly queue: { wake: DelegateWake }[] = [];
-  /** The wake ids of the live forks (running or queued): an identical wake is never forked twice at once. */
-  private readonly live = new Set<string>();
-  private plan?: DelegatePlan | null;
+  /** The wake ids this session already handled (forked, queued or handed back): a wake is never forked twice. */
+  private readonly handled = new Set<string>();
   private exact?: boolean;
   private readonly ports: DelegatePorts;
   constructor(ports: DelegatePorts) { this.ports = ports; }
@@ -124,22 +123,21 @@ export class Delegate {
     for (const wake of wakes) {
       const plan = await this.plan_();
       if (!plan || !plan.on.includes(wake.kind) || !await this.exact_() || !this.ports.session()) { left.push(wake); continue; }
-      if (this.live.has(wake.id)) { left.push(wake); continue; }
-      if (this.running.has(wake.node) || this.running.size >= plan.max) { this.live.add(wake.id); this.queue.push({ wake }); continue; }
-      this.live.add(wake.id);
-      if (!await this.launch(wake, plan)) { this.live.delete(wake.id); left.push(wake); }
+      if (this.handled.has(wake.id)) continue;   // DL3: this wake is answered by a fork already; it is not repeated
+      this.handled.add(wake.id);
+      if (this.running.has(wake.node) || this.running.size >= plan.max) { this.queue.push({ wake }); continue; }
+      if (!await this.launch(wake, plan)) { this.handled.delete(wake.id); left.push(wake); }
     }
     return left;
   }
 
   /** DL2: report the forks that settled since the last poll, as one batched message. */
   async poll(): Promise<void> {
-    const settled: { wake: DelegateWake; id: string; state: DelegateForkState }[] = [];
+    const settled: { wake: DelegateWake; id: string; seq: number; state: DelegateForkState }[] = [];
     for (const [node, fork] of [...this.running]) {
       const state = await this.ports.inspect(fork.id);
-      if (state.state !== 'sealed' && state.state !== 'absent') continue;
+      if (state.state !== 'sealed' && state.state !== 'absent' && state.state !== 'pruned') continue;
       this.running.delete(node);
-      this.live.delete(fork.wake.id);
       settled.push({ ...fork, state });
     }
     if (!settled.length) return;
@@ -157,20 +155,21 @@ export class Delegate {
     await this.ports.store.save(pending);
     this.running.clear();
     this.queue.length = 0;
-    this.live.clear();
     return pending.map(p => p.wake);
   }
 
-  /** DL3: a session follows the driver again: the wakes the previous session left pending are handed back. */
+  /**
+   * DL3: a session follows the driver again: the wakes the previous session left pending are handed back as their
+   * original wakes, and they are not forked a second time.
+   */
   async restore(): Promise<void> {
     const pending = await this.ports.store.load();
     await this.ports.store.save([]);
-    for (const p of pending) this.ports.deliver(p.wake.text);
+    for (const p of pending) { this.handled.add(p.wake.id); this.ports.deliver(p.wake.text); }
   }
 
   private async plan_(): Promise<DelegatePlan | undefined> {
-    if (this.plan === undefined) this.plan = (await this.ports.facts().catch(() => undefined)) ?? null;
-    return this.plan ?? undefined;
+    return (await this.ports.facts().catch(() => undefined)) ?? undefined;
   }
   private async exact_(): Promise<boolean> {
     if (this.exact === undefined) this.exact = await this.ports.supported().catch(() => false);
@@ -182,7 +181,7 @@ export class Delegate {
     const spec = { agent: 'delegate', task: delegatePacket(wake, plan), context: 'exact', ...(plan.budget?.wall_s !== undefined ? { timeoutMs: plan.budget.wall_s * 1000 } : {}) };
     const r = await this.ports.launch({ wake, id, labels, spec });
     if (!r.ok) return false;
-    this.running.set(wake.node, { wake, id: r.id });
+    this.running.set(wake.node, { wake, id: r.id, seq: plan.seq });
     return true;
   }
   private async startQueued(): Promise<void> {
@@ -192,7 +191,7 @@ export class Delegate {
       if (this.running.size >= plan.max) return;
       if (this.running.has(item.wake.node)) continue;
       this.queue.splice(this.queue.indexOf(item), 1);
-      if (!await this.launch(item.wake, plan)) this.live.delete(item.wake.id);
+      if (!await this.launch(item.wake, plan)) this.handled.delete(item.wake.id);
     }
   }
 }
@@ -227,11 +226,11 @@ export function delegatePacket(wake: DelegateWake, plan: DelegatePlan): string {
 }
 
 /** DL2: the batched message of the forks that settled. */
-function settleText(settled: { wake: DelegateWake; id: string; state: DelegateForkState }[], stages: DelegateStage[]): string {
+function settleText(settled: { wake: DelegateWake; id: string; seq: number; state: DelegateForkState }[], stages: DelegateStage[]): string {
   const lines: string[] = [`owed delegate: ${settled.length} fork(s) settled`];
   const used = new Set<string>();
   for (const fork of settled) {
-    const stage = stages.find(s => s.node === fork.wake.node && !used.has(s.id));
+    const stage = stages.find(s => s.node === fork.wake.node && (s.seq === undefined || s.seq > fork.seq) && !used.has(s.id));
     if (stage) {
       used.add(stage.id);
       lines.push(...stageLines(fork.wake, stage, fork.state.exact));
