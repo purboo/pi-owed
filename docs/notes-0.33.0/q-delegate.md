@@ -141,6 +141,12 @@ Nothing is delegated (and every wake is delivered exactly as in 0.32.0) when
      call made it (`writer:<call address>` of the fork's run); a same-node
      stage by another actor stays unattributed and does not hide the fork's
      stage.
+* **The merge of #4028 was refused** (`inv:suite`, `test/session0312.test.ts`
+  SN3: `ENOTEMPTY rmdir '<repo>/.git/owed/drive'`): a quit always wrote the
+  store, so every followed repo got a `delegate.json` (and its directory) on
+  every quit, asynchronously after the shutdown handler returned – a write that
+  raced the removal of a repository. The store is now written only when it
+  holds something; a repo whose plan does not delegate is never touched.
 
 ## Interpretations (documented choices)
 

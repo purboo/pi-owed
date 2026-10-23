@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +33,8 @@ interface Harness {
   launches_ok: boolean;
   /** The forks whose launch is refused (the rest are launched). */
   refused: Set<string>;
+  /** The number of store writes (a store that is never written is never created). */
+  saves: number;
   /** A new delegate over the same state: a session that follows the driver again. */
   restart: () => Delegate;
 }
@@ -48,7 +51,7 @@ function harness(o: { plan?: DelegatePlan; session?: string } = {}): Harness {
   const pending: { wake: DelegateWake; id: string }[] = [];
   const refused = new Set<string>();
   const h: Harness = {
-    delegate: undefined as unknown as Delegate, launches, delivered, staged, state, plan: o.plan, session: o.session ?? 'pi-session-1', pending, launches_ok: true, refused,
+    delegate: undefined as unknown as Delegate, launches, delivered, staged, state, plan: o.plan, session: o.session ?? 'pi-session-1', pending, launches_ok: true, refused, saves: 0,
     restart: () => new Delegate(ports()),
   };
   const ports = (): DelegatePorts => ({
@@ -67,7 +70,7 @@ function harness(o: { plan?: DelegatePlan; session?: string } = {}): Harness {
     deliver: (text: string) => { delivered.push(text); },
     store: {
       load: async () => pending.map(p => ({ wake: p.wake, id: p.id })),
-      save: async (list: { wake: DelegateWake; id: string }[]) => { pending.length = 0; pending.push(...list); },
+      save: async (list: { wake: DelegateWake; id: string }[]) => { h.saves++; pending.length = 0; pending.push(...list); },
     },
   });
   h.delegate = new Delegate(ports());
@@ -424,6 +427,46 @@ test('DL3: the session restores the store before it follows the driver, so a rep
     if (prior.OWED_DSA === undefined) delete process.env.OWED_DSA; else process.env.OWED_DSA = prior.OWED_DSA;
     if (prior.FAKE_DSA_DIR === undefined) delete process.env.FAKE_DSA_DIR; else process.env.FAKE_DSA_DIR = prior.FAKE_DSA_DIR;
     if (prior.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = prior.XDG_STATE_HOME;
+    await r.cleanup();
+  }
+});
+
+test('DL3: a quit with nothing pending writes no store file', async () => {
+  const h = harness({ plan: { on: ['question'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
+  await h.delegate.quit();
+  assert.equal(h.saves, 0, 'nothing is written when there is nothing to keep');
+  assert.equal(h.pending.length, 0, 'the store stays empty');
+});
+
+test('DL3: a session on a repo without drive.delegate creates no store file and no drive dir', async () => {
+  const r = await repo();
+  // The ledger and the store live in the repo's own .git/owed (the default layout of a real repository).
+  const priorDir = process.env.OWED_DIR;
+  process.env.OWED_DIR = join(r.cwd, '.git/owed');
+  const plan = { version: 1, trunk: 'main', closure: [], invariants: [], nodes: [{ id: 'a', writes: ['a.txt'], checks: [] }] };
+  await r.put('plan.json', JSON.stringify(plan));
+  await r.commit();
+  await ops.init({ cwd: r.cwd, as: { role: 'owner', id: 'human' }, channel: 'flag', plan: JSON.stringify(plan) });
+  const drive = join(r.cwd, '.git/owed/drive');
+  assert.equal(existsSync(drive), false, 'the drive dir does not exist before the session');
+  const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+  owedExtension({
+    registerTool() { /* unused */ },
+    registerCommand() { /* unused */ },
+    on(event: string, h: (event: unknown, ctx: unknown) => unknown) { handlers.set(event, h); return () => undefined; },
+    sendMessage() { /* unused */ },
+  } as unknown as ExtensionAPI);
+  const ctx = { cwd: r.cwd, hasUI: false, isIdle: () => true, sessionManager: { getSessionId: () => 'no-delegate-session' }, ui: { notify() { /* unused */ } } };
+  try {
+    await handlers.get('session_start')?.({ type: 'session_start', reason: 'startup' }, ctx);
+    await handlers.get('session_shutdown')?.({ type: 'session_shutdown' }, ctx);
+    // The quit of the delegates is not awaited by the shutdown handler: give the write time to land.
+    const end = Date.now() + 1000;
+    while (Date.now() < end && !existsSync(join(drive, 'delegate.json')) && !existsSync(drive)) await new Promise(res => setTimeout(res, 20));
+    assert.equal(existsSync(join(drive, 'delegate.json')), false, 'no store file is written for a repo whose plan does not delegate');
+    assert.equal(existsSync(drive), false, 'the store directory is not created for a repo whose plan does not delegate');
+  } finally {
+    if (priorDir === undefined) delete process.env.OWED_DIR; else process.env.OWED_DIR = priorDir;
     await r.cleanup();
   }
 });
