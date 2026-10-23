@@ -28,7 +28,8 @@ import { nodeTestRun } from './exec.ts';
 export { trunkRedHint, sharedCheckHint, writerDecisionCommand, writerParkCommand, writerStopNeed, reviewDecision, trunkDecision, evidenceCommand, resumeCommands, flakyRuleHint, lapsedKnownRedText, genesisLine } from './needs.ts';
 import { needs, repoNeeds, activity, itemLine, heldRuling, heldRulingText, resumeCommand, trunkRedHint, sharedCheckHint, evidenceCommand, lapsedKnownRedText, overlapDispatchCommand, genesisLine, type Need, type Runtime } from './needs.ts';
 export { boundaryClip } from './needs.ts';
-import { boundaryClip } from './needs.ts';
+export { questionPointer } from './needs.ts';
+import { boundaryClip, questionPointer } from './needs.ts';
 /** WR1: quote the whole final reply, or its head/tail plus omitted commit/durable facts. */
 export function writerReply(result?: string): string {
   const flat = result?.replace(/\s+/g, ' ').trim();
@@ -276,7 +277,11 @@ export interface Report {
   /** L2: execution blocks superseded by a plan entry after `since`; present only when there are any. */
   superseded?: SupersededBlock[];
 }
-/** SA2: decision-first runtime presentation; bounded fields retain whole code points and escaped controls. */
+/**
+ * SA2: decision-first runtime presentation; bounded fields retain whole code points and escaped controls.
+ * The clipped question itself keeps its shape (SA2); the wake that shows it points at the full question
+ * (`owed question <node> <qid>`, needs.ts `withQuestionPointers`).
+ */
 export function structuredQuestionText(q: import('./types.ts').RunQuestion, full = 'pi-durable-subagents describe --key <rid> --json'): string {
   const clip = (s: string, max: number): string => boundaryClip(s,max,oneLine);
   const options = (q.options ?? []).map((o, i) => {
@@ -291,6 +296,43 @@ export function structuredQuestionText(q: import('./types.ts').RunQuestion, full
   const details = clip(q.question,300), clipped = details !== oneLine(q.question);
   return [`DECISION: ${oneLine(q.decision_needed!)}`, `options: ${options}`, ...(context ? [clip(context, 600)] : []), `details: ${details}${clipped ? ` (full: ${full})` : ''}`].join('\n');
 }
+/** UX1: the full text of an open question, nothing clipped. */
+export interface QuestionView {
+  node: string; rid: string; role: string; qid: string; rev: number;
+  decision_needed?: string;
+  options?: { label: string; scope?: string; cost?: string; risk?: string; preferred?: boolean }[];
+  facts?: string[]; tried?: string[];
+  classification_candidates?: { label: string; evidence?: string[]; unproven?: string[] }[];
+  question: string;
+  /** The dsa call address of the question (`<node>/<role>`), the run id when it has none. */
+  call: string;
+  /** The exact command that answers it. */
+  answer: string;
+  /** The pi tool call that answers it. */
+  tool: string;
+}
+/** UX1: one open question, every field whole; the answer command ends the block. */
+export function questionText(q: QuestionView): string {
+  const lines = [`${q.node}: writer question ${q.qid} (rev ${q.rev}) from call ${q.call}`];
+  if (q.decision_needed !== undefined) lines.push(`DECISION: ${q.decision_needed}`);
+  if (q.options?.length) {
+    lines.push('options:');
+    q.options.forEach((o, i) => lines.push(`  ${i + 1}) ${o.label}${o.preferred ? ' (preferred)' : ''}${o.scope !== undefined ? ` — scope: ${o.scope}` : ''}${o.cost !== undefined ? `; cost: ${o.cost}` : ''}${o.risk !== undefined ? `; risk: ${o.risk}` : ''}`));
+  }
+  if (q.facts?.length) lines.push(`facts: ${q.facts.join('; ')}`);
+  if (q.tried?.length) lines.push(`tried: ${q.tried.join('; ')}`);
+  if (q.classification_candidates?.length) {
+    lines.push('candidates:');
+    for (const c of q.classification_candidates) lines.push(`  ${c.label}${c.evidence?.length ? ` (evidence: ${c.evidence.join('; ')})` : ''}${c.unproven?.length ? ` (unproven: ${c.unproven.join('; ')})` : ''}`);
+  }
+  lines.push(`question: ${q.question}`);
+  lines.push(`call: ${q.call} (qid ${q.qid}, rev ${q.rev})`);
+  lines.push(`answer: ${q.answer}`);
+  lines.push(`in pi: ${q.tool}`);
+  return lines.join('\n');
+}
+/** UX3: the receipt of a recorded plan: the ledger blob and the sha256 of the plan file bytes. */
+export const recordedPlanLine = (entry: { seq: number; plan?: unknown }, fileSha?: string): string => `recorded plan #${entry.seq} blob ${typeof entry.plan === 'string' ? entry.plan : 'unknown'} file sha256 ${fileSha ?? 'unknown'}`;
 
 /** D23: files of a manual evidence entry as `path sha12`, then its note (always manual, never measured). */
 export function evidenceText(e: EvidenceEntry): string {
@@ -361,6 +403,10 @@ export function withPresentationState<T extends object>(view: T, state: State, r
 }
 /** Render the authority's answer without choosing a remedy. */
 export const needText = (n: Need): string => `${n.text}${n.command ? ` → ${n.command}` : ' (no single command)'}`;
+/** UX1: an answer need names the state of a question, not its text; it points at the full question. */
+export const questionMark = (n: Need): string => n.kind === 'answer' && n.qid ? ` ${questionPointer(n.node, n.qid)}` : '';
+/** UX1: a need line that shows a question points at the full question. */
+export const needLine = (n: Need): string => `Next: ${needText(n)}${questionMark(n)}`;
 export function nodeNext(s: State, node: string, rt?: Runtime): string {
   return (node === 'trunk' ? repoNeeds(s, rt) : needs(s, node, rt)).map(needText).join('\n') || activity(s, node, rt)?.text || '';
 }
@@ -754,7 +800,7 @@ export function renderWhy(v: ReceiptCard, options: { full?: boolean } = {}): str
     ...v.items.filter(i => i.status === 'D').map(i => `${i.mark} ${i.obligation}: ${cardItemLine(v, i)}`),
     ...v.blocks.map(b => { if (b.ruling === 'needed') return `⛔ ${b.obligation} block #${b.seq}${rulingMark(b)}; ${b.clear}`; const note = review(b); return `⛔ ${b.obligation} block #${b.seq}${rulingMark(b)}${note ? `: ${shortNote(note)}` : ''}; ${b.clear}`; }),
     ...(held ? [`Next: ${resumeCommand(v.node)}`] : []),
-    ...ns.slice(held ? 0 : 1).map(n => `Next: ${needText(n)}`),
+    ...ns.slice(held ? 0 : 1).map(n => needLine(n)),
     ...alternatives,
     ...(v.mergeChecks ?? []).filter(i => i.status === 'D').map(i => `${i.mark} merge check ${i.obligation}: ${oneLine(i.detail)} → owed why ${v.node} --full`),
     ...(v.outOfWrites ? outOfWritesText(v.outOfWrites).split('\n') : []),
@@ -767,7 +813,7 @@ export function renderWhy(v: ReceiptCard, options: { full?: boolean } = {}): str
   const context = [...(v.reviewRequirement && v.phase !== 'merged' ? [oneLine(reviewRequirementText(v.reviewRequirement))] : [])];
   context.push(...downgradeLines(currentDowngrades(v)));
   const open = v.items.filter(i => i.status === 'D' && !(blocked.has(i.obligation) && i.mark === '⛔')).length + v.blocks.length + (v.mergeChecks ?? []).filter(i => i.status === 'D').length + readyLines(v).length;
-  const outcome = v.phase === 'merged' && v.accepted ? 'merged' : `${held ? `held by ruling #${held.seq}` : ns[0] ? needText(ns[0]) : cardActivity(v) ?? (v.measuring ? measurementText(v.measuring) : readyLines(v)[0] ?? (v.phase === 'merged' ? 'obligations outstanding' : phaseNames[v.phase]))}${v.accepted && v.phase !== 'accepted' ? ' (accepted)' : ''}; ${open ? `${open} outstanding` : 'nothing outstanding'}`;
+  const outcome = v.phase === 'merged' && v.accepted ? 'merged' : `${held ? `held by ruling #${held.seq}` : ns[0] ? `${needText(ns[0])}${questionMark(ns[0])}` : cardActivity(v) ?? (v.measuring ? measurementText(v.measuring) : readyLines(v)[0] ?? (v.phase === 'merged' ? 'obligations outstanding' : phaseNames[v.phase]))}${v.accepted && v.phase !== 'accepted' ? ' (accepted)' : ''}; ${open ? `${open} outstanding` : 'nothing outstanding'}`;
   const s = presentationStates.get(v);
   const tracks = s ? trackedWhy(s,v.node) : [];
   return [`${v.node}: ${outcome}`, ...lines, ...tracks, ...context, ...tryReceiptLines(v), `Details: owed why ${v.node} --full`].join('\n');
@@ -807,7 +853,7 @@ export function renderReceipt(v: ReceiptCard, options: { full?: boolean } = {}):
     const note = e?.kind === 'review' ? e.note ?? '' : b.note ?? '';
     return `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}${b.note ? ` — note: ${b.note}` : ''}${b.ruling === 'needed' && options.full && e?.kind === 'review' && note ? `\nReview note: ${oneLine(note)}` : ''}`;
   };
-  return [`${v.node}: ${held ? heldRulingText(v.node, held.seq) : ns[0] ? needText(ns[0]) : cardActivity(v) ?? (v.phase === 'merged' && !v.accepted ? 'obligations outstanding' : v.measuring ? measurementText(v.measuring) : phaseNames[v.phase])}`, ...(held ? [`Next: ${resumeCommand(v.node)}`] : []), ...ns.slice(held ? 0 : 1).map(n => `Next: ${needText(n)}`), ...((v.stages ?? []).map(s => `${s.id}: ${s.state}${s.reason ? ` (${s.reason})` : ''} → ${s.command}`)), ...ns.flatMap(n => (n.alternatives ?? []).map(c => `  or: ${c}`)), ...(v.mergeWaiting && !v.measuring ? [mergeWaitingText(v.mergeWaiting, v.accepted ? 'merge' : 'measure')] : []), ...(v.rebasePending ? [rebasePendingText(v.rebasePending)] : []), ...(v.held !== undefined ? [`held by abandon #${v.held}`] : []), ...(v.exec ? [v.exec] : []), ...(v.drive ? [v.drive] : []), ...(v.reviewRequirement ? [oneLine(reviewRequirementText(v.reviewRequirement))] : []), ...(v.models ? [v.models] : []), ...(v.modelWarnings ?? []).filter(w => options.full || typeof w === 'string').map(w => `Warning: ${typeof w === 'string' ? w : `${w.message} (acknowledged)`}`), ...(v.reviewCarried ? [v.reviewCarried] : []), ...(v.carried ? [`↻ ${carriedText(v.carried)}`] : []), ...(v.halt ? [`⏸ ${haltText(v.halt, held)}`] : []), ...(v.staleHalt ? [`⏸ ${staleHaltText(v.staleHalt)}`] : []), ...(v.reported !== undefined ? [`reported (resume #${v.reported})`] : []), ...(v.later ? ['backlog (later)'] : []), ...(v.waiting ? [`⏳ ${waitingLine(v.waiting)}; the driver acts again when ${waitingNodes.join(', ')} ${waitingNodes.length > 1 ? 'merge' : 'merges'} or after another resume`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(i => `${textItem(i)}${i.status === 'D' ? `\n  next: ${cardItemLine(v, i)}` : ''}`), ...(v.mergeChecks?.length ? ['Merge checks:', ...v.mergeChecks.map(textItem)] : []), ...v.blocks.map(blockText), ...(v.superseded ?? []).map(b => `⊘ ${b.text}`), ...(v.outOfWrites ? [outOfWritesText(v.outOfWrites)] : []), ...(v.grantedWrites ?? []).map(grantedWritesText), ...conflictLines(v.conflicts), `Untested changes: ${v.untested.join(', ') || 'none'}`, ...(options.full ? [`Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`] : []), ...downgradeLines(options.full ? downgrades.filter(d => d.allowance !== undefined) : downgrades), ...(options.full ? [`owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`] : []), ...(v.receipts ?? []).map(receiptText), ...tryReceiptLines(v,!!options.full), ...(v.lifts?.length ? [liftsText(v.node, v.lifts)] : []), ...(presentationStates.get(v) ? trackedWhy(presentationStates.get(v)!,v.node) : []), ...(v.rulingFollowUp ? ['Ruling to forward:', v.rulingFollowUp] : []), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');}
+  return [`${v.node}: ${held ? heldRulingText(v.node, held.seq) : ns[0] ? `${needText(ns[0])}${questionMark(ns[0])}` : cardActivity(v) ?? (v.phase === 'merged' && !v.accepted ? 'obligations outstanding' : v.measuring ? measurementText(v.measuring) : phaseNames[v.phase])}`, ...(held ? [`Next: ${resumeCommand(v.node)}`] : []), ...ns.slice(held ? 0 : 1).map(n => needLine(n)), ...((v.stages ?? []).map(s => `${s.id}: ${s.state}${s.reason ? ` (${s.reason})` : ''} → ${s.command}`)), ...ns.flatMap(n => (n.alternatives ?? []).map(c => `  or: ${c}`)), ...(v.mergeWaiting && !v.measuring ? [mergeWaitingText(v.mergeWaiting, v.accepted ? 'merge' : 'measure')] : []), ...(v.rebasePending ? [rebasePendingText(v.rebasePending)] : []), ...(v.held !== undefined ? [`held by abandon #${v.held}`] : []), ...(v.exec ? [v.exec] : []), ...(v.drive ? [v.drive] : []), ...(v.reviewRequirement ? [oneLine(reviewRequirementText(v.reviewRequirement))] : []), ...(v.models ? [v.models] : []), ...(v.modelWarnings ?? []).filter(w => options.full || typeof w === 'string').map(w => `Warning: ${typeof w === 'string' ? w : `${w.message} (acknowledged)`}`), ...(v.reviewCarried ? [v.reviewCarried] : []), ...(v.carried ? [`↻ ${carriedText(v.carried)}`] : []), ...(v.halt ? [`⏸ ${haltText(v.halt, held)}`] : []), ...(v.staleHalt ? [`⏸ ${staleHaltText(v.staleHalt)}`] : []), ...(v.reported !== undefined ? [`reported (resume #${v.reported})`] : []), ...(v.later ? ['backlog (later)'] : []), ...(v.waiting ? [`⏳ ${waitingLine(v.waiting)}; the driver acts again when ${waitingNodes.join(', ')} ${waitingNodes.length > 1 ? 'merge' : 'merges'} or after another resume`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(i => `${textItem(i)}${i.status === 'D' ? `\n  next: ${cardItemLine(v, i)}` : ''}`), ...(v.mergeChecks?.length ? ['Merge checks:', ...v.mergeChecks.map(textItem)] : []), ...v.blocks.map(blockText), ...(v.superseded ?? []).map(b => `⊘ ${b.text}`), ...(v.outOfWrites ? [outOfWritesText(v.outOfWrites)] : []), ...(v.grantedWrites ?? []).map(grantedWritesText), ...conflictLines(v.conflicts), `Untested changes: ${v.untested.join(', ') || 'none'}`, ...(options.full ? [`Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`] : []), ...downgradeLines(options.full ? downgrades.filter(d => d.allowance !== undefined) : downgrades), ...(options.full ? [`owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`] : []), ...(v.receipts ?? []).map(receiptText), ...tryReceiptLines(v,!!options.full), ...(v.lifts?.length ? [liftsText(v.node, v.lifts)] : []), ...(presentationStates.get(v) ? trackedWhy(presentationStates.get(v)!,v.node) : []), ...(v.rulingFollowUp ? ['Ruling to forward:', v.rulingFollowUp] : []), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');}
 export function renderStatus(v: StatusView, options: { full?: boolean } = {}): string {
   if (options.full) return renderStatusFull(v);
   const summary = v.summary ?? { merged: v.groups.merged?.length ?? 0, needs: [], progress: [], debt: [] };
