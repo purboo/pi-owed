@@ -1,3 +1,4 @@
+import { stageDraftErrors, actKind, aActAllowed } from './stage.ts';
 import { riskDowngrades, reviewRequirement, reviewRequirementText } from './risk.ts';
 import { matchesWrite, writeCovers, writeOverlaps, writesSyntax, withWritesSyntax, writesKeySyntax, writesAllowChanged, matchesAllowOnly, allowOnlyWidened, allowOnlyRefusal, type WritesSyntax } from './writes.ts';
 import { matchesGlob } from 'node:path';
@@ -587,7 +588,7 @@ export function reduceFrom(base: State, more: Entry[], plans: PlanLookup): State
 /** G1: continues the fold of `s` itself with `more` (mutates and returns `s`); for a state the caller owns alone. */
 export function extendState(s: State, more: Entry[]): State { fold(s, more); return s; }
 /** The entry kinds this owed interprets (G1.5): any other kind needs a newer owed. */
-const KINDS: readonly string[] = ['genesis', 'refresh', 'plan', 'rule', 'dispatch', 'submit', 'grant', 'obs', 'review', 'waive', 'defer', 'abandon', 'hold', 'rebase', 'merge', 'note', 'adopt', 'escape', 'decoy-commit', 'decoy-reveal', 'launch', 'send', 'halt', 'evidence', 'resume', 'sweep'];
+const KINDS: readonly string[] = ['genesis', 'refresh', 'plan', 'rule', 'dispatch', 'submit', 'grant', 'obs', 'review', 'waive', 'defer', 'abandon', 'hold', 'rebase', 'merge', 'note', 'adopt', 'escape', 'decoy-commit', 'decoy-reveal', 'launch', 'send', 'halt', 'evidence', 'resume', 'sweep', 'stage', 'accept', 'reject', 'overturn'];
 /**
  * G1.5 closed entry enum audit (types.ts): Base.channel, send.sendKind/reason, obs.verdict, review.obligation/verdict/
  * needs, launch.role, halt.needs, escape.class. `by`, other obligations and counts.format are open strings, not enums;
@@ -701,7 +702,7 @@ function decisionErrors(s: State, d: Draft): string[] {
 }
 
 /** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
-const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'decision', 'text', 'nodes', 'writer', 'prospective', 'answer', 'answers', 'supersedes'];
+const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'decision', 'text', 'nodes', 'via', 'writer', 'prospective', 'answer', 'answers', 'supersedes'];
 /** RC1–RC3: from 0.13, future observation fields must not be silently replayed by verdict alone. */
 const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined', 'quarantine_passed', 'grant_refused', 'waits_on', 'auto_remeasure', 'infra', 'remeasure_match', 'batch', 'lease_wait_ms'];
 const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
@@ -1363,6 +1364,7 @@ const DRIVER_WRITES: readonly string[] = ['dispatch', 'launch', 'send', 'halt', 
  * the driver itself causes). A dispatch opens a new attempt and clears it whoever records it.
  */
 function clearsHalt(e: Entry, node: string): boolean {
+  if (e.kind === 'stage' || e.kind === 'accept' || e.kind === 'reject' || e.kind === 'overturn') return false;
   if (e.kind === 'dispatch' && e.node === node) return true;
   // DC: only the explicit resume clears a decision's halt (--no-resume preserves it).
   if (e.decision !== undefined && e.kind !== 'resume') return false;
@@ -1847,6 +1849,13 @@ export function validateDraft(s: State, d: Draft, replay = false): string[] {
     return errors;
   }
   if (s.seq === -1) return [...errors, 'genesis must be established first'];
+  if (['stage','accept','reject','overturn'].includes(d.kind)) errors.push(...stageDraftErrors(s,d,entriesOf(s)));
+  if ('via' in d && d.via !== undefined) {
+    const kind = actKind(d);
+    if (typeof d.via !== 'string' || !d.via.startsWith('fork:') || !d.via.slice(5) || r !== 'owner' || !kind || !aActAllowed(entriesOf(s),s.plan,kind)) errors.push('fork A act is not enabled');
+    if (d.kind === 'rule' && (!d.answer || d.writer !== false || d.nodes === '*' || d.nodes.length !== 1 || d.prospective)) errors.push('fork preferred-answer requires one answer and no writer change');
+    if (d.kind === 'resume' && (d.after !== undefined || d.expect !== undefined || d.remeasure || d.release)) errors.push('fork infra-resume cannot change recovery scope');
+  }
   const n = 'node' in d ? s.nodes[d.node] : undefined;
   const spec = 'node' in d ? nodeSpec(s, d.node) : undefined;
   if (d.kind === 'merge' && (d.facts.carry !== undefined || d.facts.rebased !== undefined)) errors.push('merge facts never carry submit review inheritance or rebased markers');
@@ -2192,7 +2201,7 @@ function resumeBatchErrors(s: State, d: Extract<Draft,{kind:'resume'}>): string[
 /** Fields every entry may carry (assigned by the ledger or common to drafts). */
 const ENTRY_BASE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'decision'];
 /** The only kind-specific fields accepted on these entries; anything else is refused. */
-const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence' | 'resume' | 'sweep', readonly string[]> = { sweep: ['commit', 'key', 'verdict', 'counts', 'log', 'failed', 'bisect', 'boundary'], resume: ['node', 'attempt', 'after', 'expect', 'note', 'release', 'batch', 'remeasure'], evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence', 'sweep'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels', 'rulings'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
+const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence' | 'resume' | 'sweep', readonly string[]> = { sweep: ['commit', 'key', 'verdict', 'counts', 'log', 'failed', 'bisect', 'boundary'], resume: ['via', 'node', 'attempt', 'after', 'expect', 'note', 'release', 'batch', 'remeasure'], evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence', 'sweep'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels', 'rulings'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
 /** RC (0.27): fields interpreted on kinds that do not share the rule/obs/strict field checks. */
 const OTHER_FIELDS: Record<string, readonly string[]> = {
   genesis: ['trunk', 'commit', 'plan', 'writes_syntax', 'state', 'path'],

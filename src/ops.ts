@@ -1,3 +1,6 @@
+import { parseBundle, stageId, stageSeq, stageEntry, stageClosed, stageTouches, stageLedgerReason, stageFileReason, overlap, questionFingerprint, repositoryFile, forkPrincipal, aActAllowed, preferredOption, actKind, disabledActs, stageLines, UnverifiedQuestions } from './stage.ts';
+export { forkPrincipal, stageLines } from './stage.ts';
+import type { StageBundle, StageEntry, StageView } from './types.ts';
 import { open as openFile, readFile, mkdir, appendFile, rmdir, writeFile, rename, unlink, chmod, truncate } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -93,6 +96,11 @@ export function subagentCall(env: NodeJS.ProcessEnv = process.env): 'DSA_CALL' |
 export function subagentRefusal(role: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
   const v = subagentCall(env);
   return v && (role === 'owner' || role === 'parent') ? `owner and parent acts are reserved for the main agent; this process is a subagent call (${v})` : undefined;
+}
+/** SG6: a fork's refused owner/parent act names `owed stage`; a call that is not a fork keeps the D25.3 wording. */
+export async function subagentRefusalFor(cwd: string, role: string, env: NodeJS.ProcessEnv = process.env): Promise<string | undefined> {
+  const base = subagentRefusal(role, env); if (!base) return undefined;
+  return (await forkPrincipal(cwd, env)) ? `${base}; use owed stage` : base;
 }
 /** G2.3 (F5): refusal of a claimed `parent:drive` (CLI `--as`, pi `as`); only the driver records as it, internally. */
 export const DRIVER_CLAIM = "parent:drive is the driver's identity: only owed drive records as it; it cannot be claimed with --as or as";
@@ -797,8 +805,9 @@ type PlanArgs = Actor & { rev?: string; path?: string; note?: string; notCarried
  * `before` and the guard accepts it), followed by its N1 carry submits. Shared by planSet and amend (N3), so both apply
  * the same authority rules.
  */
-async function planDrafts(o: PlanArgs, ledger: Ledger, p: { plan: Plan; sha: string; note?: Draft }, before: State): Promise<{ latest: Awaited<ReturnType<typeof load>>; drafts: Draft[] }> {
-  const latest = await load(ledger,[p.sha]), { state } = latest; stable(before,state); const d: Draft = { kind:'plan', by:by(o), channel:o.channel, prior:before.planSha, plan:p.sha, writes_syntax:planWritesSyntax(p.plan), downgrades:planDowngrades(state.plan,p.plan), ...(o.rev !== undefined ? { rev:o.rev } : {}), ...(o.path !== undefined ? { path:o.path } : {}), ...(o.note !== undefined && o.note.trim() ? { note:o.note } : {}) }; guard(state,d);
+async function planDrafts(o: PlanArgs, ledger: Ledger, p: { plan: Plan; sha: string; note?: Draft }, before: State, override?: Awaited<ReturnType<typeof load>>): Promise<{ latest: Awaited<ReturnType<typeof load>>; drafts: Draft[] }> {
+  const lookup = override ? (sha: string): Plan => sha === p.sha ? p.plan : override.lookup(sha) : undefined;
+  const latest = override && lookup ? {...override, lookup, state:reduceFrom(override.state,[],lookup)} : await load(ledger,[p.sha]), { state } = latest; stable(before,state); const d: Draft = { kind:'plan', by:by(o), channel:o.channel, prior:before.planSha, plan:p.sha, writes_syntax:planWritesSyntax(p.plan), downgrades:planDowngrades(state.plan,p.plan), ...(o.rev !== undefined ? { rev:o.rev } : {}), ...(o.path !== undefined ? { path:o.path } : {}), ...(o.note !== undefined && o.note.trim() ? { note:o.note } : {}) }; guard(state,d);
   return { latest, drafts:await withCarries(o.cwd,latest,d,p.plan,o.notCarried,p.note) };
 }
 /**
@@ -857,7 +866,7 @@ export interface AmendEdit {
   planSha: string;
 }
 export interface AmendResult { warnings?: string[]; node: string; file: string; path: string; added: string[]; present: string[]; covered: AmendEdit['covered']; plan?: Entry; rule?: Entry; carried: SubmitEntry[]; notCarried: NotCarried[] }
-type AmendArgs = Context & { signal?: AbortSignal; node: string; writes: string[]; note: string; plan?: string };
+type AmendArgs = Context & { signal?: AbortSignal; node: string; writes: string[]; note: string; plan?: string; source?: {file:string;path:string;text:string} };
 /** WA2: bare paths and +paths widen writes; removal and empty paths are refused. */
 export function amendPaths(writes: string[]): string[] {
   if (!Array.isArray(writes) || !writes.length) throw new OwedError('amend needs at least one path to add: --writes +<path>[,+<path>...]','usage');
@@ -892,7 +901,7 @@ async function amendEdit(o: AmendArgs, entries: Entry[], s: State): Promise<Amen
   const spec = s.plan.nodes.find(n => n.id === o.node);
   if (!spec) throw new OwedError(`Node ${o.node} does not exist`);
   if (s.nodes[o.node]?.merged) throw new OwedError(`Node ${o.node} is merged; amend widens the writes of a node that is not merged`);
-  const source = await amendSource(o.cwd,entries,o.plan), read = await readPlan({ cwd:o.cwd, path:source });
+  const source = o.source?.file ?? await amendSource(o.cwd,entries,o.plan), read = o.source ? {plan:o.source.text,path:o.source.path} : await readPlan({ cwd:o.cwd, path:source });
   if (planBlob(read.plan,false).sha !== s.planSha) throw new OwedError(`plan file has unrecorded edits: ${read.path} differs from the ledger's current plan; record it with owed plan first, or restore it`);
   const doc = parseDocument(read.plan);
   const nodes = doc.get('nodes'), item = isSeq(nodes) ? nodes.items.find(x => isMap(x) && x.get('id') === o.node) : undefined;
@@ -1038,8 +1047,210 @@ function replayed(latest: Awaited<ReturnType<typeof load>>, drafts: Draft[]): St
   for (const x of drafts) { const e = { ...x, seq:replay.length ? replay.at(-1)!.seq+1 : 0, ts:new Date().toISOString(), prev:replay.at(-1)?.hash ?? '' } as Entry; e.hash = entryHash(e); replay.push(e); more.push(e); }
   return reduceFrom(latest.state,more,latest.lookup);
 }
-export { answer } from './answer.ts';
+import { answer as ordinaryAnswer } from './answer.ts';
+export async function answer(o: import('./answer.ts').AnswerOptions): Promise<import('./answer.ts').AnswerResult> {
+  const fork = subagentCall() ? await forkPrincipal(o.cwd) : undefined;
+  if (!fork) return ordinaryAnswer(o);
+  if (fork.node !== o.node || o.expect !== undefined) throw new OwedError('fork may only answer its own preferred writer option; use owed stage');
+  const ledger = await Ledger.open(o.cwd), client = o.dsa ?? new Dsa({cwd:o.cwd});
+  const entry = await ledger.withLock(async () => {
+    const {state:s,entries} = await load(ledger);
+    if (!aActAllowed(entries,s.plan,'preferred-answer')) throw new OwedError('fork preferred-answer is not enabled; use owed stage');
+    const n = node(s,o.node), launches = n.slot?.open ? n.runs.find(r => r.attempt === n.slot!.attempt)?.launches.filter(l => l.role === 'writer') ?? [] : [];
+    const questions = (await Promise.all(launches.map(async l => {
+      const view = await client.describe(l.rid);
+      return view.state === 'asking' ? (view.questions ?? []).filter(q => (!o.rid || o.rid === l.rid) && (!o.qid || o.qid === q.qid) && (!o.rev || o.rev === q.rev)).map(q => ({l,q})) : [];
+    }))).flat();
+    if (questions.length !== 1 || !preferredOption(questions[0]!.q,o.text)) throw new OwedError('fork must select the preferred option of its open writer question; use owed stage');
+    const {l,q} = questions[0]!, prior = entries.findLast(e => e.kind === 'rule' && ruleAnswers(e).some(a => a.rid === l.rid && a.qid === q.qid));
+    const existing = prior?.kind === 'rule' && prior.answer?.rev === q.rev ? prior : undefined;
+    const text = `Answer to writer question ${q.qid}: ${o.text}`;
+    if (existing) {if(existing.text !== text) throw new OwedError('answer already records different text');return existing;}
+    const d: Draft = {kind:'rule',by:'owner:pi',channel:'delegated',via:`fork:${fork.call}`,nodes:[o.node],writer:false,text,answer:{rid:l.rid,qid:q.qid,rev:q.rev},...(prior ? {supersedes:prior.seq} : {})};
+    guard(s,d); return (await ledger.append([d]))[0] as RuleEntry;
+  });
+  const {deliverAnswer,deliverRuling,answerRequest,answerStates} = await import('./answer.ts'), ref = entry.answer!;
+  const delivery = await deliverAnswer(client,entry,ref,o.text), rulingDelivery = await deliverRuling(o.cwd,entry,client,ref.rid);
+  return {entry,request:answerRequest(entry,ref),delivery,rulingDelivery,answers:await answerStates(client,entry,[{node:o.node,...ref}])};
+}
 import { answerStateText } from './answer.ts';
+
+// ---------- SG: forks prepare, the parent accepts ----------
+async function stageSource(cwd: string, entries: Entry[]): Promise<{file:string;path:string;text:string}> {
+  const law = entries.findLast(e => (e.kind === 'plan' || e.kind === 'genesis') && e.path);
+  if (!law || (law.kind !== 'plan' && law.kind !== 'genesis') || !law.path) throw new OwedError('stage plan_patch needs a recorded plan file path');
+  const root = await git.repoRoot(cwd), file = resolve(root,law.path);
+  return {file,path:law.path,text:await readFile(file,'utf8')};
+}
+async function parentAct(o: Actor): Promise<void> {
+  if (!['parent','owner'].includes(o.as.role) || by(o) === DRIVER) throw new OwedError('requires parent or owner; use owed stage');
+  const refusal = await subagentRefusalFor(o.cwd,o.as.role); if (refusal) throw new OwedError(refusal);
+  owner(o);
+}
+export async function stage(o: Actor & {node:string;file:string;dsa?:Pick<Dsa,'describe'>}): Promise<StageEntry> {
+  const ledger = await Ledger.open(o.cwd), bytes = await readFile(resolve(o.cwd,o.file),'utf8'), bundle = parseBundle(bytes), root = await git.repoRoot(o.cwd);
+  // SG2/SG6: anyone may stage, but a subagent call never records a parent or owner identity (D25.3): it records the
+  // delegated agent that wrote the proposal.
+  const call = process.env.DSA_CALL || process.env.DSA_EXEC, author = call && ['owner','parent'].includes(o.as.role) ? `writer:${call}` : by(o);
+  // The question fingerprint needs a dsa describe: it runs before the lock (a command never runs under it).
+  const questions = await questionFingerprint((await load(ledger)).state,o.node,o.dsa ?? new Dsa({cwd:o.cwd}));
+  return ledger.withLock(async () => {
+    const latest = await load(ledger), {state:s,entries} = latest;
+    node(s,o.node);
+    if (!s.plan.nodes.some(n => n.id === o.node)) throw new OwedError(`Node ${o.node} does not exist`);
+    if (bundle.read_through_seq > s.seq) throw new OwedError('read_through_seq exceeds ledger head');
+    const touches = stageTouches(bundle,o.node,s.plan);
+    for (const id of bundle.decide?.nodes ?? []) if (!s.plan.nodes.some(n => n.id === id)) throw new OwedError(`decide names unknown node ${id}`);
+    for (const a of bundle.appends ?? []) {
+      if (!s.plan.drive?.delegate?.appends?.includes(a.path)) throw new OwedError(`append path ${a.path} is not listed in drive.delegate.appends`);
+      await repositoryFile(root,a.path);
+    }
+    for (const e of bundle.evidence ?? []) { const file = await repositoryFile(root,e.path); if (sha256(await readFile(file)) !== e.sha256) throw new OwedError(`evidence sha mismatch: ${e.path}`); }
+    let patch: {patched_plan:string;plan_path:string;before_sha256:string;after_sha256:string} | undefined;
+    if (bundle.plan_patch) {
+      const source = await stageSource(o.cwd,entries), patched = await readFile(await repositoryFile(root,bundle.plan_patch.file));
+      if (sha256(source.text) !== bundle.plan_patch.before_sha256) throw new OwedError('plan before_sha256 mismatch');
+      if (sha256(patched) !== bundle.plan_patch.after_sha256) throw new OwedError('plan after_sha256 mismatch');
+      parsePlan(patched.toString());
+      patch = {patched_plan:await ledger.putBlob(patched),plan_path:source.path,before_sha256:bundle.plan_patch.before_sha256,after_sha256:bundle.plan_patch.after_sha256};
+    }
+    const d: Draft = {kind:'stage',by:author,node:o.node,bundle:await ledger.putBlob(bytes),...patch,questions,touches,class:bundle.class ?? 'B',summary:bundle.summary,read_through_seq:bundle.read_through_seq};
+    guard(s,d); return (await ledger.append([d]))[0] as StageEntry;
+  });
+}
+async function stageReason(o: Context, e: StageEntry, latest: Awaited<ReturnType<typeof load>>, client: Pick<Dsa,'describe'>, retry = false): Promise<string | undefined> {
+  const reason = stageLedgerReason(e,latest.entries,latest.state.plan,planAt(latest.state,e.read_through_seq+1),latest.lookup);
+  if (reason) return reason;
+  const file = await stageFileReason(await git.repoRoot(o.cwd),e,retry); if (file) return file;
+  let fingerprint: string;
+  try { fingerprint = await questionFingerprint(latest.state,e.node,client); }
+  catch (error) { throw new UnverifiedQuestions(`cannot verify open questions: ${(error as Error).message}`); }
+  if (fingerprint !== e.questions) return `question changed (qid ${JSON.parse(fingerprint).map((q:{qid:string}) => q.qid).join(', ') || 'none'})`;
+}
+/**
+ * The stage listing. A read-only listing never fails wholesale: a stage whose open questions cannot be verified (the
+ * dsa describe failed) is listed as `unknown` with its reason, and the other stages are still listed. The strict
+ * listing (`strict: true`) refuses instead, so an accept keeps recording nothing (SG3).
+ */
+export async function stages(o: Context & {all?:boolean;dsa?:Pick<Dsa,'describe'>;strict?:boolean}): Promise<StageView[]> {
+  const latest = await load(await Ledger.open(o.cwd)), client = o.dsa ?? new Dsa({cwd:o.cwd}), views: StageView[] = [];
+  for (const e of latest.entries) if (e.kind === 'stage') {
+    const closed = stageClosed(latest.entries,e); if (closed && !o.all) continue;
+    let state: StageView['state'], reason: string|undefined;
+    if (closed) state = closed;
+    else {
+      try { reason = await stageReason(o,e,latest,client,true); state = reason ? 'stale' : 'open'; }
+      catch (error) {
+        if (!(error instanceof UnverifiedQuestions) || o.strict) throw error;
+        reason = error.reason; state = 'unknown';
+      }
+    }
+    views.push({id:stageId(e.seq),node:e.node,class:e.class,state,...(reason ? {reason} : {}),age:Math.max(0,Date.now()-Date.parse(e.ts)),summary:e.summary,command:`owed accept ${stageId(e.seq)}`});
+  }
+  return views;
+}
+async function applyStageAppends(cwd: string, stage: StageEntry, bundle: StageBundle, ruling: number): Promise<string[]> {
+  const root = await git.repoRoot(cwd), marker = `<!-- owed ${stageId(stage.seq)} -->`, applied: string[] = [];
+  for (const a of bundle.appends ?? []) {
+    const file = await repositoryFile(root,a.path), old = await readFile(file,'utf8').catch((e:NodeJS.ErrnoException) => {if(e.code === 'ENOENT') return ''; throw e;});
+    await mkdir(dirname(file),{recursive:true});
+    if (!old.includes(marker)) { await appendFile(file,`${old && !old.endsWith('\n') ? '\n' : ''}${marker}\n${a.text.replaceAll('{ruling}',String(ruling))}\n`); applied.push(a.path); }
+  }
+  return applied;
+}
+export interface AcceptResult {id:string;entry:Entry;ruling:number;plan?:number;appends:string[];decision?:DecideResult;alreadyAccepted?:boolean}
+export const acceptText = (r:AcceptResult):string => `accepted ${r.id}: ruling #${r.ruling}${r.plan !== undefined ? `; plan #${r.plan}` : ''}${r.appends.length ? `; appended ${r.appends.join(', ')}` : ''}${r.alreadyAccepted ? '; already accepted' : ''}${r.decision?.deliveryFailures.length ? `\n${r.decision.deliveryFailures.join('\n')}` : ''}`;
+class AcceptMoved extends Error {}
+export async function accept(o: Actor & {id:string;amend?:string;dsa?:Pick<Dsa,'describe'|'send'>;signal?:AbortSignal}): Promise<AcceptResult> {
+  await parentAct(o);
+  if (o.amend !== undefined && (typeof o.amend !== 'string' || !o.amend.trim() || o.amend.length > 8000)) throw new OwedError('amend must be nonempty text of at most 8000 chars','usage');
+  // Commands (dsa describe, plan admission) run before the lock; the lock only revalidates the read sequence and appends.
+  for (let attempt = 1;; attempt++) {
+    try { return await acceptOnce(o); }
+    catch (error) { if (!(error instanceof AcceptMoved)) throw error; if (attempt >= 5) throw new OwedError(`ledger changed during accept ${o.id}; retry; nothing recorded`); }
+  }
+}
+async function acceptOnce(o: Actor & {id:string;amend?:string;dsa?:Pick<Dsa,'describe'|'send'>;signal?:AbortSignal}): Promise<AcceptResult> {
+  const ledger = await Ledger.open(o.cwd), client = o.dsa ?? new Dsa({cwd:o.cwd});
+  checkAbort(o.signal);
+  const initial = await load(ledger);
+  let latest = initial;
+  const e = stageEntry(latest.entries,o.id), bundle = parseBundle((await ledger.getBlob(e.bundle)).toString()), closed = stageClosed(latest.entries,e);
+  if (closed === 'rejected') throw new OwedError(`stage ${o.id} is rejected`);
+  if (closed === 'accepted') {
+    const accepted = latest.entries.find(x => x.kind === 'accept' && x.stage === o.id)! as Extract<Entry,{kind:'accept'}>;
+    return {id:o.id,entry:accepted,ruling:accepted.ruling,plan:accepted.plan,appends:await applyStageAppends(o.cwd,e,bundle,accepted.ruling),alreadyAccepted:true};
+  }
+  const reason = await stageReason(o,e,latest,client,true);
+  if (reason) throw new OwedError(`stage ${o.id} is stale: ${reason} — fork again`);
+  for (const older of latest.entries) if (older.kind === 'stage' && older.seq < e.seq && !stageClosed(latest.entries,older) && overlap(e.touches,older.touches,latest.state.plan) && !await stageReason(o,older,latest,client,true)) throw new OwedError(`accept ${stageId(older.seq)} first or reject it`);
+  for (const a of bundle.appends ?? []) if (!latest.state.plan.drive?.delegate?.appends?.includes(a.path)) throw new OwedError(`append path ${a.path} is no longer delegated`);
+  const prefix: Draft[] = [];
+  let source: {file:string;path:string;text:string} | undefined;
+  if (e.patched_plan) {
+    const bytes = await ledger.getBlob(e.patched_plan), root = await git.repoRoot(o.cwd), file = resolve(root,e.plan_path!);
+    source = {file,path:e.plan_path!,text:bytes.toString()};
+    const stored = await storePlan(o.cwd,ledger,source.text,latest.state.plan,undefined,o);
+    const planned = await planDrafts({...o,path:source.path,note:`accept ${o.id}`},ledger,stored,latest.state);
+    prefix.push(...planned.drafts);
+    const plannedState = replayed(planned.latest,prefix);
+    latest = {...planned.latest,state:plannedState,entries:[...entriesOf(plannedState)]};
+  }
+  const text = `${o.amend ?? bundle.ruling_text} [stage ${o.id}]`;
+  const decision = bundle.decide ? await prepareDecision({...o,...bundle.decide,nodes:bundle.decide.nodes!,text,dsa:client},ledger,latest,source,true) : undefined;
+  let deliver: (() => Promise<DecideResult>) | undefined;
+  const result = await ledger.withLock(async () => {
+    checkAbort(o.signal);
+    if ((await load(ledger)).state.seq !== initial.state.seq) throw new AcceptMoved();
+    let finishDecision: (entries:Entry[]) => DecideResult;
+    let decisionDrafts: Draft[], decisionFile: AmendEdit | undefined;
+    if (decision) {
+      const pending = await decision.prepare(latest);
+      decisionDrafts = pending.drafts; decisionFile = pending.file; finishDecision = pending.finish;
+    } else {
+      const d: Draft = {kind:'rule',by:by(o),channel:o.channel,nodes:[e.node],text};
+      guard(latest.state,d); decisionDrafts = [d];
+      finishDecision = entries => ({decision:latest.state.seq+1,nodes:[e.node],entries,rule:entries[0] as RuleEntry,answered:0,answers:[],resumed:false,deliveryFailures:[]});
+    }
+    const drafts = [...prefix,...decisionDrafts];
+    // Decisions can amend the already patched plan in the same acceptance transaction.
+    const decisionRuleIndex = drafts.findIndex(d => d.kind === 'rule'), ruling = initial.state.seq+1+decisionRuleIndex;
+    const planIndex = drafts.findIndex(d => d.kind === 'plan'), plan = planIndex < 0 ? undefined : initial.state.seq+1+planIndex;
+    const d: Draft = {kind:'accept',by:by(o),channel:o.channel,stage:o.id,ruling,...(plan !== undefined ? {plan} : {})};
+    const combinedLookup = (sha:string):Plan => { try {return latest.lookup(sha);} catch {return cachedPlanSync(ledger,sha);} };
+    const combined = {...initial,lookup:combinedLookup,state:reduceFrom(initial.state,[],combinedLookup)};
+    guard(replayed(combined,drafts),d); drafts.push(d);
+    const file = decisionFile ? {file:decisionFile.file,text:decisionFile.next} : source;
+    if (file) {
+      const temp = `${file.file}.owed-stage-${randomUUID()}.tmp`;
+      try {await writeFile(temp,file.text);await chmod(temp,(await stat(file.file)).mode & 0o7777);await rename(temp,file.file);} finally {await unlink(temp).catch(() => undefined);}
+    }
+    const entries = await ledger.append(drafts), decided = finishDecision(entries.slice(prefix.length,-1));
+    if (decision) deliver = () => decision.deliver(decided);
+    else deliver = async () => {
+      const {deliverRuling} = await import('./answer.ts');
+      const r = await deliverRuling(o.cwd,decided.rule,client);
+      decided.deliveryFailures.push(...r.failures); return decided;
+    };
+    return {id:o.id,entry:entries.at(-1)!,ruling,plan,appends:[] as string[],decision:decided};
+  },undefined,o.signal);
+  // Marker-deduplicated appends follow the durable accept; a retry of an accepted stage completes missing ones.
+  result.appends = await applyStageAppends(o.cwd,e,bundle,result.ruling);
+  if (deliver) result.decision = await deliver();
+  return result;
+}
+export async function acceptAllB(o: Actor & {dsa?:Pick<Dsa,'describe'|'send'>;signal?:AbortSignal}): Promise<AcceptResult[]> {
+  await parentAct(o); const results: AcceptResult[] = [];
+  // The strict listing refuses a stage whose questions cannot be verified: the whole batch records nothing.
+  for (const e of await stages({...o,dsa:o.dsa,strict:true})) if (e.class === 'B' && e.state === 'open') results.push(await accept({...o,id:e.id}));
+  return results;
+}
+export async function reject(o: Actor & {id:string;note:string}): Promise<Entry> {
+  await parentAct(o); return mutate(o,() => ({kind:'reject',by:by(o),channel:o.channel,stage:o.id,note:o.note}));
+}
+export async function overturn(o: Actor & {seq:number;note:string}): Promise<Entry> {
+  await parentAct(o); return mutate(o,() => ({kind:'overturn',by:by(o),channel:o.channel,act:o.seq,note:o.note}));
+}
 
 // ---------- DC: one decision, one append; effects only after the lock ----------
 export type DecideArgs = Actor & { signal?: AbortSignal; nodes: string | string[]; text: string; writes?: string[]; allow_only?: string[]; defer?: string; resume?: boolean; after?: string | string[]; expect?: 'report'; remeasure?: boolean; writer?: boolean; dsa?: Pick<Dsa,'describe'|'send'> };
@@ -1049,11 +1260,11 @@ function decideNodes(nodes: string | string[]): string[] {
   if (!ids.length || ids.some(x => !x || x === '*')) throw new OwedError('decide needs a non-empty list of named nodes','usage');
   return ids;
 }
-async function decideAmend(o: DecideArgs, ids: string[], entries: Entry[], s: State): Promise<AmendEdit & { perNode: Record<string, AmendEdit['covered']> }> {
-  const edits = o.writes !== undefined ? await Promise.all(ids.map(node => amendEdit({ cwd:o.cwd, node, writes:o.writes!, note:o.text },entries,s))) : [];
+async function decideAmend(o: DecideArgs, ids: string[], entries: Entry[], s: State, sourceOverride?: {file:string;path:string;text:string}): Promise<AmendEdit & { perNode: Record<string, AmendEdit['covered']> }> {
+  const edits = o.writes !== undefined ? await Promise.all(ids.map(node => amendEdit({ cwd:o.cwd, node, writes:o.writes!, note:o.text, source:sourceOverride },entries,s))) : [];
   let first = edits[0];
   if (!first) {
-    const source = await amendSource(o.cwd,entries), read = await readPlan({cwd:o.cwd,path:source});
+    const source = sourceOverride?.file ?? await amendSource(o.cwd,entries), read = sourceOverride ? {plan:sourceOverride.text,path:sourceOverride.path} : await readPlan({cwd:o.cwd,path:source});
     if (planBlob(read.plan,false).sha !== s.planSha) throw new OwedError('plan file has unrecorded edits; nothing recorded');
     first = {node:ids[0]!,file:await realpath(source),path:read.path,text:read.plan,next:read.plan,prior:s.plan,plan:s.plan,added:[],present:[],covered:[],planSha:s.planSha};
   }
@@ -1084,9 +1295,32 @@ export async function decidePreview(o: Omit<DecideArgs,'as'>): Promise<{ prior:P
   return { prior:state.plan, plan:e.plan };
 }
 export async function decide(o: DecideArgs): Promise<DecideResult> {
+  const ledger = await Ledger.open(o.cwd), prepared = await prepareDecision(o,ledger,await load(ledger));
+  const result = await ledger.withLock(async () => {
+    const pending = await prepared.prepare(await load(ledger));
+    let temp: string | undefined;
+    if (pending.file) {
+      if (await readFile(pending.file.file,'utf8') !== pending.file.text) throw new OwedError('plan file has unrecorded edits; nothing recorded');
+      temp = `${pending.file.file}.owed-decide-${randomUUID()}.tmp`;
+      await writeFile(temp,pending.file.next); await chmod(temp,(await stat(pending.file.file)).mode & 0o7777);
+    }
+    let entries: Entry[];
+    try { entries = await ledger.append(pending.drafts); } catch (e) { if (temp) await unlink(temp).catch(() => undefined); throw e; }
+    if (temp && pending.file) await rename(temp,pending.file.file);
+    return pending.finish(entries);
+  });
+  return prepared.deliver(result);
+}
+async function prepareDecision(o: DecideArgs, ledger: Ledger, before: Awaited<ReturnType<typeof load>>, sourceOverride?: {file:string;path:string;text:string}, accepted = false) {
   checkAbort(o.signal);
+  const fork = !accepted && subagentCall() ? await forkPrincipal(o.cwd) : undefined;
+  if (fork) {
+    const ids = decideNodes(o.nodes);
+    if (ids.length !== 1 || ids[0] !== fork.node || o.writes !== undefined || o.allow_only !== undefined || o.defer !== undefined || o.writer || o.after !== undefined || o.expect !== undefined || o.remeasure || o.resume === true || !aActAllowed(before.entries,before.state.plan,'preferred-answer')) throw new OwedError('fork may only answer its own preferred writer option; use owed stage');
+    o = {...o,as:{role:'owner',id:'pi'},channel:'delegated',resume:false};
+  }
   if (!['parent','owner'].includes(o.as.role) || by(o) === DRIVER) throw new OwedError('decide requires parent or owner, never the driver');
-  const refusal = subagentRefusal(o.as.role); if (refusal) throw new OwedError(refusal);
+  const refusal = !accepted && !fork ? subagentRefusal(o.as.role) : undefined; if (refusal) throw new OwedError(refusal);
   owner(o);
   if (typeof o.text !== 'string' || !o.text.trim()) throw new OwedError('decide requires nonempty text','usage');
   for (const k of ['resume','remeasure','writer'] as const) if (o[k] !== undefined && typeof o[k] !== 'boolean') throw new OwedError(`decide ${k} must be a boolean`,'usage');
@@ -1094,18 +1328,20 @@ export async function decide(o: DecideArgs): Promise<DecideResult> {
   if (o.expect !== undefined && o.expect !== 'report') throw new OwedError('decide expect must be report','usage');
   if (o.resume === false && o.expect !== undefined) throw new OwedError('--no-resume cannot take --expect report: no resume would be recorded','usage');
   if (o.resume === false && (o.after !== undefined || o.remeasure)) throw new OwedError('--no-resume cannot take --after or --remeasure','usage');
-  const ids = decideNodes(o.nodes), ledger = await Ledger.open(o.cwd), client = o.dsa ?? new Dsa({cwd:o.cwd});
-  const before = await load(ledger), s = before.state;
+  const ids = decideNodes(o.nodes), client = o.dsa ?? new Dsa({cwd:o.cwd});
+  const s = before.state;
   for (const id of ids) { node(s,id); if (s.nodes[id]!.merged) throw new OwedError(`Node ${id} is merged; decide names unfinished nodes`); }
-  const amend = o.writes !== undefined || o.allow_only !== undefined ? await decideAmend(o,ids,before.entries,s) : undefined;
+  const amend = o.writes !== undefined || o.allow_only !== undefined ? await decideAmend(o,ids,before.entries,s,sourceOverride) : undefined;
   const stored = amend && canonical(amend.plan) !== canonical(s.plan) ? await storePlan(o.cwd,ledger,amend.next,s.plan,undefined,o) : undefined;
   const granted = [...new Set(Object.values(amend?.perNode ?? {}).flat().filter(c => c.entry.startsWith('allow rule (plan #')).map(c => c.path))];
-  const decisionText = o.text + (granted.length ? ` (writes already granted by allow rule, plan #${before.entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')!.seq}: ${granted.join(', ')})` : '') + (o.allow_only !== undefined ? ` (allow rule grants capped to: ${o.allow_only.join(', ') || '[]'})` : '');
+  const stageSuffix = accepted ? / \[stage S\d+\]$/.exec(o.text)?.[0] ?? '' : '';
+  const decisionText = (stageSuffix ? o.text.slice(0,-stageSuffix.length) : o.text) + (granted.length ? ` (writes already granted by allow rule, plan #${before.entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')!.seq}: ${granted.join(', ')})` : '') + (o.allow_only !== undefined ? ` (allow rule grants capped to: ${o.allow_only.join(', ') || '[]'})` : '') + stageSuffix;
   const answers: import('./types.ts').DecisionAnswer[] = [], answerTargets = new Map<string,string>();
   for (const id of ids) {
     const n = s.nodes[id]!, launches = n.slot?.open ? n.runs.find(r => r.attempt === n.slot!.attempt)?.launches ?? [] : [];
     const questions = (await Promise.all(launches.map(async launch => { const view = await client.describe(launch.rid); return view.state === 'asking' ? (view.questions ?? []).map(question => ({launch,question})) : []; }))).flat();
     if (questions.length > 1) throw new OwedError(`Ambiguous question for ${id}; use owed answer --rid and --qid before deciding`);
+    if (fork && (questions.length !== 1 || questions[0]!.launch.role !== 'writer' || !preferredOption(questions[0]!.question,o.text))) throw new OwedError('fork may only choose the preferred option of its open writer question; use owed stage');
     if (questions[0]) { const {launch,question} = questions[0]; answers.push({node:id,rid:launch.rid,qid:question.qid,rev:question.rev}); if (question.to) answerTargets.set(launch.rid,question.to); }
   }
   answers.sort((a,b) => a.node.localeCompare(b.node) || a.qid.localeCompare(b.qid));
@@ -1122,9 +1358,14 @@ export async function decide(o: DecideArgs): Promise<DecideResult> {
       deferred.push({kind:'defer',by:by(o),channel:o.channel,node,items:[{id,key:facts.invKeys[id] ?? ''}],reason:o.text});
     }
   }
-  const result = await ledger.withLock(async () => {
+  return { prepare: async (latest: Awaited<ReturnType<typeof load>>) => {
     checkAbort(o.signal);
-    const latest = await load(ledger);
+    if (fork) {
+      if (!aActAllowed(latest.entries,latest.state.plan,'preferred-answer')) throw new OwedError('fork preferred-answer disabled; use owed stage');
+      const a = answers[0];
+      const view = a ? await client.describe(a.rid) : undefined;
+      if (view?.state !== 'asking' || !view.questions?.some(q => q.qid === a!.qid && q.rev === a!.rev && preferredOption(q,o.text))) throw new OwedError('fork question changed; use owed stage');
+    }
     stable(s,latest.state);
     for (const id of ids) stable(s,latest.state,id);
     if (canonical(latest.state.rules) !== canonical(s.rules) || ids.some(id => canonical(latest.state.nodes[id]?.runs) !== canonical(s.nodes[id]?.runs) || latest.state.nodes[id]?.held !== s.nodes[id]?.held || latest.state.nodes[id]?.halt?.seq !== s.nodes[id]?.halt?.seq)) throw new OwedError('decision state changed; retry; nothing recorded');
@@ -1132,7 +1373,7 @@ export async function decide(o: DecideArgs): Promise<DecideResult> {
     const first = latest.state.seq+1, drafts: Draft[] = [];
     let prepared = latest;
     if (amend && stored) {
-      const planned = await planDrafts({...o,path:amend.path,note:o.text},ledger,stored,s);
+      const planned = await planDrafts({...o,path:amend.path,note:o.text},ledger,stored,s,accepted ? latest : undefined);
       prepared = planned.latest;
       const carries = planned.drafts;
       if (carries.some(d => d.kind === 'submit' && !ids.includes(d.node))) throw new OwedError('decision amend would carry an undecided node; nothing recorded');
@@ -1146,7 +1387,7 @@ export async function decide(o: DecideArgs): Promise<DecideResult> {
       answer = {rid:a.rid,qid:a.qid,rev:a.rev}; text = `Answer to ${launch.role} question ${a.qid}: ${decisionText}`;
       supersedes = latest.entries.findLast(e => e.kind === 'rule' && ruleAnswers(e).some(ref => ref.rid === a.rid && ref.qid === a.qid))?.seq;
     }
-    push({kind:'rule',by:by(o),channel:o.channel,nodes:ids,text,...(o.writer !== undefined ? {writer:o.writer} : answer ? {writer:false} : {}),...(answer ? {answer} : {}),...(answers.length > 1 ? {answers} : {}),...(supersedes !== undefined ? {supersedes} : {})});
+    push({kind:'rule',by:by(o),channel:o.channel,...(fork ? {via:`fork:${fork.call}`} : {}),nodes:ids,text,...(o.writer !== undefined ? {writer:o.writer} : answer ? {writer:false} : {}),...(answer ? {answer} : {}),...(answers.length > 1 ? {answers} : {}),...(supersedes !== undefined ? {supersedes} : {})});
     let resumed = false;
     for (const id of ids) {
       const n = s.nodes[id]!, requested = o.resume === true || o.after !== undefined || o.expect !== undefined || !!o.remeasure || o.resume !== false && (!!halted(s,id) || n.held !== undefined);
@@ -1154,20 +1395,8 @@ export async function decide(o: DecideArgs): Promise<DecideResult> {
     }
     // Replay every draft before any durable or plan-file write.
     const final = replayed(prepared,drafts), errors = decisionTailErrors(final); if (errors.length) throw new OwedError(errors.join('; '));
-    let temp: string | undefined;
-    if (amend && stored) {
-      if (await readFile(amend.file,'utf8') !== amend.text) throw new OwedError('plan file has unrecorded edits; nothing recorded');
-      temp = join(dirname(amend.file),`.${basename(amend.file)}.owed-decide-${randomUUID()}.tmp`);
-      try { await writeFile(temp,amend.next); await chmod(temp,(await stat(amend.file)).mode & 0o7777); }
-      catch (e) { await unlink(temp).catch(() => undefined); throw new OwedError(`cannot write ${amend.path}: ${(e as Error).message}; nothing recorded`); }
-    }
-    let entries: Entry[];
-    try { entries = await ledger.append(drafts); } catch (e) { if (temp) await unlink(temp).catch(() => undefined); throw e; }
-    const appendedErrors = decisionTailErrors(replayed(prepared,entries));
-    if (appendedErrors.length) throw new OwedError(appendedErrors.join('; '));
-    if (temp && amend) { try { await rename(temp,amend.file); } catch (e) { throw new OwedError(`decision #${first} recorded; recorded plan in ${temp}: move it over ${amend.file} (${(e as Error).message})`,'internal'); } }
-    return { warnings:stored?.lines, decision:first,nodes:ids,entries,rule:entries.find((e): e is RuleEntry => e.kind === 'rule')!,...(amend ? {added:amend.added,covered:amend.perNode,...(stored ? {plan:entries[0]!} : {})} : {}),...(o.defer !== undefined ? {deferred:o.defer} : {}),...(o.allow_only !== undefined ? {allow_only:o.allow_only} : {}),answered:answers.length,answers:[],resumed,deliveryFailures:[],...(o.remeasure ? {remeasure:ids.flatMap(id => remeasureQueuedText(final,id))} : {}) } as DecideResult;
-  });
+    return { drafts, file:amend && stored ? amend : undefined, finish: (entries: Entry[]): DecideResult => ({ warnings:stored?.lines, decision:first,nodes:ids,entries,rule:entries.find((e): e is RuleEntry => e.kind === 'rule')!,...(amend ? {added:amend.added,covered:amend.perNode,...(stored ? {plan:entries[0]!} : {})} : {}),...(o.defer !== undefined ? {deferred:o.defer} : {}),...(o.allow_only !== undefined ? {allow_only:o.allow_only} : {}),answered:answers.length,answers:[],resumed,deliveryFailures:[],...(o.remeasure ? {remeasure:ids.flatMap(id => remeasureQueuedText(final,id))} : {}) }) };
+  }, deliver: async (result: DecideResult): Promise<DecideResult> => {
   const { deliverRuling, deliverAnswer, answerRetry, answerStates } = await import('./answer.ts');
   const delivery = await deliverRuling(o.cwd,result.rule,client);
   result.deliveryFailures.push(...delivery.failures.map(f => `${oneLine(f)}; next dispatch or follow-up delivers ruling #${result.rule.seq}`));
@@ -1178,6 +1407,7 @@ export async function decide(o: DecideArgs): Promise<DecideResult> {
   }
   result.answers = await answerStates(client,result.rule,delivered);
   return result;
+  } };
 }
 export function decideText(r: DecideResult): string {
   return `decision #${r.decision} for ${r.nodes.join(',')}: ruling #${r.rule.seq}${r.plan ? `; ${r.allow_only !== undefined && !r.added?.length ? 'allow_only' : `writes ${r.added!.map(p => `+${p}`).join(',')}`} (plan #${r.plan.seq})` : r.added !== undefined ? '; writes unchanged' : ''}${r.allow_only !== undefined ? `; allow_only [${r.allow_only.join(', ')}]` : ''}${Object.entries(r.covered ?? {}).flatMap(([node, covered]) => covered.map(c => `; ${node}: ${c.path} already covered by ${c.entry}`)).join('')}${r.deferred ? `; deferred ${r.deferred}` : ''}${r.answered ? `; answered ${r.answered} question(s)` : ''}${r.resumed ? '; resumed' : ''}${r.answers.map(a => `\n${answerStateText(a)}`).join('')}${r.remeasure?.length ? `\n${r.remeasure.join('\n')}` : ''}${r.deliveryFailures.length ? `\ndelivery failed: ${r.deliveryFailures.join('; ')}` : ''}`;
@@ -2364,6 +2594,16 @@ export async function summaryStatusView(cwd: string, dir: string, state: State, 
   const max = driverRunning && Number.isSafeInteger(lock.owner.max) && lock.owner.max! > 0 ? lock.owner.max : driveConfig(state.plan).max;
   const rt = await assembleRuntime({ cwd, state, driverRunning, now });
   const view = statusView(state,entries,mergeChecks,now,driverRunning,currentDefers,max,rt,await statusBatchIsolation(dir,state));
+  if (entries.some(e => e.kind === 'stage')) {
+    view.stages = (await stages({cwd,all:true})).filter(e => state.plan.nodes.some(n => n.id === e.node));
+    view.stageCounts = Object.fromEntries(['open','stale','unknown','accepted','rejected'].map(k => [k,view.stages!.filter(s => s.state === k).length]));
+    for (const cls of ['A','B','C']) for (const status of ['open','stale','unknown','accepted','rejected']) view.stageCounts[`${cls}/${status}`] = view.stages.filter(s => s.class === cls && s.state === status).length;
+  }
+  if (entries.some(e => actKind(e) || e.kind === 'overturn')) {
+    const lastPlan = entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')?.seq ?? -1;
+    view.aActs = {A:entries.filter(e => e.seq > lastPlan && actKind(e)).length,B:0,C:0};
+    view.disabledAActs = disabledActs(entries,state.plan);
+  }
   for (const i of mergeChecks) view.summary!.needs.push({ node: i.subject, reason: `${i.obligation}: ${oneLine(i.detail)}`, command: `owed why ${i.subject}` });
   const red=await sweepRed(cwd,entries,state.trunk.commit);
   if (red) view.sweepRed=red;
@@ -2467,6 +2707,7 @@ export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   const mergeChecks = await currentTrunkRedChecks(o.cwd,view,o.node);
   const max = running && Number.isSafeInteger(lock.owner.max) && lock.owner.max! > 0 ? lock.owner.max : driveConfig(view.plan).max;
   const card = receipt(view,entries,o.node,await hintedMergeChecks(o.cwd,view,o.node,mergeChecks),max,rt);
+  if (entries.some(e => e.kind === 'stage' && e.node === o.node)) card.stages = (await stages({cwd:o.cwd})).filter(e => e.node === o.node);
   card.tryReceipts = tryReceipts(entries,o.node).map(r => ({...r,logPath:join(ledger.dir,'blobs',r.log)}));
   card.conflicts = (await candidateConflicts(o.cwd,view,o.node))[o.node];
   const pending = await rebasePending(view, o.node);
@@ -2782,13 +3023,25 @@ export async function resume(o: Omit<ResumeArgs,'node'> & { node: string | strin
   const ids = Array.isArray(o.node) ? o.node : o.node.split(',');
   const nodes = [...new Set(ids.map(id => id.trim()))];
   if (!nodes.length || nodes.some(id => !id)) throw new OwedError('resume needs a non-empty node list','usage');
+  const fork = subagentCall() ? await forkPrincipal(o.cwd) : undefined;
+  if (fork) {
+    if (nodes.length !== 1 || nodes[0] !== fork.node || o.after !== undefined || o.expect !== undefined || o.remeasure) throw new OwedError('fork may only infra-resume its own node; use owed stage');
+    o = {...o,as:{role:'owner',id:'pi'},channel:'delegated'};
+  } else {const refusal = subagentRefusal(o.as.role);if(refusal) throw new OwedError(refusal);}
   owner(o); const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
     const latest = await load(ledger), drafts: Draft[] = [], first = latest.state.seq+1;
+    if (fork) {
+      const n = latest.state.nodes[fork.node], halt = halted(latest.state,fork.node), c = n?.candidate;
+      const obligations = c ? Object.entries(c.keys).filter(([key]) => /^(check:|red:|strength:|writes$)/.test(key)) : [];
+      const covered = obligations.length > 0 && obligations.every(([obligation,key]) => latest.entries.some(e => e.kind === 'obs' && e.by === 'executor:owed' && e.subject === fork.node && e.obligation === obligation && e.key === key && e.commit === c!.commit && e.seq > c!.seq && e.verdict !== 'error' && !e.probe));
+      if (!aActAllowed(latest.entries,latest.state.plan,'infra-resume') || !halt || !/(?:dsa (?:read|describe)|attest.*(?:infrastructure|describe|unknown seal|lost response|error)|dsa.*timed out)/i.test(halt.reason) || !covered) throw new OwedError('fork infra-resume requires an infrastructure halt and covering ledger measurements; use owed stage');
+    }
     let merged = false;
     for (const id of nodes) {
       const state = drafts.length ? replayed(latest,drafts) : latest.state;
       const d = resumeDraft({ ...o, node:id },state);
+      if (fork) d.via = `fork:${fork.call}`;
       if (nodes.length > 1) d.batch = first;
       guard(state,d); drafts.push(d);
       const after = afterNodes(d.after);
