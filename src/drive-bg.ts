@@ -18,6 +18,7 @@ import { assembleRuntime } from './activity.ts';
 import type { Need, Runtime } from './needs-types.ts';
 import { trunkParkNotices, sharedParkNotices, heldFlaky } from './reducer.ts';
 import { Dsa } from './dsa.ts';
+import { sha256 } from './canon.ts';
 import type { State } from './types.ts';
 import type { ExitReason, LockOwner } from './drive-run.ts';
 import { oneLine, resumeCommands, writerStopNeed } from './views.ts';
@@ -338,6 +339,44 @@ export function renderDriveStop(r: DriveStop): string {
 type LineKind = 'wake' | 'terminal' | 'merge' | 'quiet';
 const TERMINAL = new Set(['exit', 'killed', 'stopped', 'idle']);
 /**
+ * DL1: the kinds of node wake a plan may hand to an exact fork (`drive.delegate.on`).
+ * `question` an asking run, `writer-stop` a stopped writer, `review-asks` a review that asks for a ruling,
+ * `infra-halt` a halt caused by a dsa read or attest infrastructure error, `needs-owner` a decision only the owner can make.
+ */
+export type DelegateKind = 'question' | 'writer-stop' | 'review-asks' | 'infra-halt' | 'needs-owner';
+/** A node wake the delegate may take over: the node, its kind, the text the session would have read and a stable id. */
+export interface DelegateWake { node: string; kind: DelegateKind; text: string; id: string; }
+/** The dsa read or attest infrastructure error that makes a halt an `infra-halt` (SG7's infra-resume rule). */
+const INFRA_HALT = /(?:dsa (?:read|describe)|attest.*(?:infrastructure|describe|unknown seal|lost response|error)|dsa.*timed out)/i;
+/**
+ * DL1: the delegatable node wake of a driver report, or undefined when the report is not one (a repo-scoped notice,
+ * a merge, a terminal line, or a node wake of a kind no plan lists).
+ */
+export function delegateWake(j: Record<string, unknown> | undefined, text: string): DelegateWake | undefined {
+  if (!j || typeof j.node !== 'string' || !j.node) return undefined;
+  const node = j.node, source = String(j.text ?? j.detail ?? text);
+  const kind = ((): DelegateKind | undefined => {
+    if (j.qid !== undefined || /\basks \(qid /.test(source)) return 'question';
+    if (j.do === 'halt' && writerStopNeed(source, node)) return 'writer-stop';
+    if (/review asks:/.test(source)) return 'review-asks';
+    if (j.do === 'halt' && INFRA_HALT.test(source)) return 'infra-halt';
+    if (source.includes('needs the owner')) return 'needs-owner';
+    return undefined;
+  })();
+  if (!kind) return undefined;
+  const need = plainNeed(j, text);
+  if (!need) return undefined;
+  const facts = typeof j.facts === 'number' ? j.facts : 0;
+  return { node, kind, text: need, id: delegateWakeId(node, kind, source, facts) };
+}
+/**
+ * DL1: the stable id of a node wake (the same wake keeps its id across sessions, so a fork is never launched twice).
+ * The fact mark is part of it: two different facts of the same node are two wakes, the same fact is one.
+ */
+export function delegateWakeId(node: string, kind: DelegateKind, source: string, facts = 0): string {
+  return `${node}:${kind}:${sha256(`${node}\u0000${kind}\u0000${facts}\u0000${source}`).slice(0, 16)}`;
+}
+/**
  * Which log lines wake the session (D17.7): halts, notifies (questions, owner-needed, stalled), rejected / conflicting
  * dsa requests, refused merges and errors (both halt or need a look), events errors, a staying driver's `idle-wait`
  * (H1.2), terminal lines and any line that is not a JSON object. A merge only rides along with the next wake; everything else (dispatch, launch, send applied,
@@ -498,6 +537,11 @@ export interface FollowerOptions {
   busy?: () => boolean;
   /** pi (H1.1b): revalidates the batch's wake lines at delivery time. Absent: every wake line is delivered. */
   revalidate?: Revalidate;
+  /**
+   * DL1: the delegate takes the node wakes it forks. It returns the ids of the wakes it took; a taken wake is not
+   * delivered as a turn (its exact fork answers it instead). Absent: every wake line is delivered.
+   */
+  divert?: (wakes: DelegateWake[]) => Promise<string[]>;
 }
 /** 0.8 (L1.5): the line a wake message with at least one halt line carries before `Next:`. */
 export const haltHintText = `To clear a halt without an obligation: ${resumeCommands()}`;
@@ -824,16 +868,39 @@ export class Follower {
     if (this.stopped || !left.some(p => p.wake)) { this.pending = [...left, ...rest]; return undefined; }
     const boundary = this.boundary();
     if (boundary === 'blocked' || this.stopped || this.o.busy?.()) return undefined;
-    const message = this.message(left, dropped.size);
-    try { await this.o.deliver(message); } catch { return undefined; }   // kept whole: revalidated again next tick
+    // DL1: the delegate may take the node wakes of this batch; a taken wake is not part of the turn.
+    const kept = await this.divert(left);
+    const message = this.message(kept, dropped.size);
+    // A failed delivery keeps the lines that were not delivered; the taken wakes stay taken (their fork answers them).
+    try { await this.o.deliver(message); } catch { this.pending = [...kept, ...rest]; return undefined; }
     this.pending = rest;
     if (this.ended) this.stop();
     return message;
   }
+  /** DL1: drop the wake lines the delegate took; the rest of the batch stays in the turn. */
+  private async divert(lines: readonly PendingLine[]): Promise<PendingLine[]> {
+    if (!this.o.divert) return [...lines];
+    const candidates: { line: PendingLine; wake: DelegateWake }[] = [];
+    for (const p of lines) {
+      if (!p.wake || !p.json) continue;
+      const wake = delegateWake(p.json, p.text);
+      if (wake) candidates.push({ line: p, wake });
+    }
+    if (!candidates.length) return [...lines];
+    let taken: string[];
+    try { taken = await this.o.divert(candidates.map(c => c.wake)); } catch { return [...lines]; }
+    const ids = new Set(taken);
+    if (!ids.size) return [...lines];
+    return lines.filter(p => {
+      if (!p.wake || !p.json) return true;
+      const wake = delegateWake(p.json, p.text);
+      return !wake || !ids.has(wake.id);
+    });
+  }
 }
 
 /** pi hooks of a DriveWatch (H1.1): see FollowerOptions.busy / revalidate (built per repository). */
-export interface WatchHooks { busy: () => boolean; revalidate: (repo: string) => Revalidate; session?: () => string | undefined }
+export interface WatchHooks { busy: () => boolean; revalidate: (repo: string) => Revalidate; session?: () => string | undefined; divert?: (repo: string) => (wakes: DelegateWake[]) => Promise<string[]> }
 /**
  * The followers of one pi extension instance: one per driver log (= per repository) (D17.7). `follow` replaces the
  * follower of that log; `attach` replays the current driver's bounded log tail; `flush` (agent_settled) delivers what the followers hold; `stopAll` (session_shutdown) clears every timer, the
@@ -851,7 +918,7 @@ export class DriveWatch {
     const previous = this.followers.get(o.log);
     if (previous && !previous.stopped) return previous.matches({ ...o, at: o.since }) ? previous : previous.reconnect(o);
     const session = this.hooks?.session?.();
-    const hooks = this.hooks ? { busy: this.hooks.busy, revalidate: this.hooks.revalidate(o.repo), ...(this.hooks.session ? { owns: (owner: LockOwner) => this.hooks!.session!() === session && ownsDriver(o.repo, owner, session) } : {}) } : {};
+    const hooks = this.hooks ? { busy: this.hooks.busy, revalidate: this.hooks.revalidate(o.repo), ...(this.hooks.divert ? { divert: this.hooks.divert(o.repo) } : {}), ...(this.hooks.session ? { owns: (owner: LockOwner) => this.hooks!.session!() === session && ownsDriver(o.repo, owner, session) } : {}) } : {};
     const f: Follower = new Follower({ ...o, deliver: this.deliver, ...hooks, ...(this.intervalMs !== undefined ? { intervalMs: this.intervalMs } : {}), onStop: () => { if (this.followers.get(o.log) === f) this.followers.delete(o.log); } });
     this.followers.set(o.log, f);
     return this.intervalMs === 0 ? f : f.start();

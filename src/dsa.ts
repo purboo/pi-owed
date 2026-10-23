@@ -16,6 +16,13 @@ export interface DsaEvent {
 }
 export type SendKind = 'follow-up' | 'steer' | 'notify' | 'answer' | 'model';
 
+/**
+ * The exactness facts of a call (dsa 1.3.0): the run was an exact fork of the origin session's capture
+ * (`mode: "exact"`) or was rebuilt (`mode: "rebuilt"`, with the reason), plus the cache ratio of the first
+ * provider request and the cost of the call.
+ */
+export interface ExactFacts { mode: 'exact' | 'rebuilt'; reason?: string; firstCacheRatio?: number; costUsd?: number; }
+
 export type Rejected = { outcome: 'rejected'; reason: string; spec_digest?: string };
 export type Conflict = { outcome: 'conflict'; spec_digest?: string; state?: string; wid?: string };
 export type Pending = { outcome: 'pending'; reason?: string };
@@ -100,6 +107,8 @@ interface Spawned { exit: number | null; stdout: string; stderr: string; timedOu
 const LIMIT = 16 * 1024 * 1024;
 const holdUnsupported = new Set<string>();
 const commandSupport = new Map<string, Promise<string | undefined>>();
+/** DL4: the `--origin-session` probe of a binary, once per binary. */
+const originSessionSupport = new Map<string, Promise<boolean>>();
 export type CommandResult =
   | { outcome: 'unsupported'; reason: string }
   | { outcome: 'cancelled'; rid: string; wid?: string }
@@ -192,14 +201,45 @@ export class Dsa {
   }
 
   /** `run --request <rid> --spec - --labels <json> --cwd <dir> --json`; specBytes go to stdin exactly as given. */
-  async run(rid: string, specBytes: string | Uint8Array, labels?: Record<string, string>, cwd?: string): Promise<RunResult> {
+  async run(rid: string, specBytes: string | Uint8Array, labels?: Record<string, string>, cwd?: string, originSession?: string): Promise<RunResult> {
     const session = this.sessionRefused ? undefined : this.session;
-    const args = ['run', '--request', rid, '--spec', '-', ...(labels ? ['--labels', JSON.stringify(labels)] : []), ...(cwd ? ['--cwd', cwd] : []), ...(session !== undefined ? ['--session', session] : []), '--json', ...this.wait()];
+    const args = ['run', '--request', rid, '--spec', '-', ...(labels ? ['--labels', JSON.stringify(labels)] : []), ...(cwd ? ['--cwd', cwd] : []), ...(session !== undefined ? ['--session', session] : []), ...(originSession !== undefined ? ['--origin-session', originSession] : []), '--json', ...this.wait()];
     const r = await this.exec(args, specBytes);
     // E1.2: a dsa older than 1.0.31 refuses the unknown flag before it records anything: drop it and run again.
     const refused = session !== undefined ? sessionRefusal(r) : undefined;
-    if (refused !== undefined) { this.sessionRefused = true; this.onSessionRefused?.(refused); return this.run(rid, specBytes, labels, cwd); }
+    if (refused !== undefined) { this.sessionRefused = true; this.onSessionRefused?.(refused); return this.run(rid, specBytes, labels, cwd, originSession); }
     return requestOutcome(r, reply => ({ outcome: 'applied', wid: str(reply.wid), created: reply.created === true, spec_digest: str(reply.spec_digest) }));
+  }
+
+  /**
+   * DL1/DL4: does this dsa accept `--origin-session` (dsa >= 1.3.0)? Probed once per binary with `--help`;
+   * an older dsa has no such option and cannot pin an exact fork's capture.
+   */
+  async supportsOriginSession(): Promise<boolean> {
+    let probe = originSessionSupport.get(this.bin);
+    if (!probe) {
+      probe = this.read('--help', ['--help']).then(r => {
+        if (r.timedOut || r.signal) { originSessionSupport.delete(this.bin); return false; }
+        return r.exit === 0 && /--origin-session\b/.test(`${r.stdout}\n${r.stderr}`);
+      }, () => false);
+      originSessionSupport.set(this.bin, probe);
+    }
+    return probe;
+  }
+
+  /**
+   * DL: the call address of a dsa call (`<wid>@<rev>/<key>@<gen>`) resolved through `describe <wid> --json`.
+   * `describe --key` takes a request id, so a call address cannot be described that way.
+   */
+  async describeCall(call: string): Promise<RunView> {
+    const wid = call.split('@')[0]!.trim();
+    const r = await this.read(`describe ${call}`, ['describe', wid, '--json']);
+    if (r.timedOut) throw new DsaError(`dsa describe ${call} timed out`, { exit: r.exit, stdout: r.stdout, stderr: r.stderr, transient: true });
+    if (r.signal) throw new DsaError(`dsa describe ${call} ended by signal ${r.signal}`, { exit: r.exit, stdout: r.stdout, stderr: r.stderr, transient: true });
+    if (r.exit !== 0) throw new DsaError(`dsa describe ${call} exited ${r.exit}: ${tail(r.stderr || r.stdout)}`, r);
+    const d = parseWhole(r.stdout);
+    if (!d) throw new DsaError(`dsa describe ${call}: unparsable output`, r);
+    return toRunView(call, d);
   }
 
   /** MV: read-only, once per binary. Unknown capability conservatively uses the legacy measurement path. */
@@ -348,7 +388,7 @@ export class Dsa {
    * with the generation a follow-up returned, so a describe that still shows the previous, sealed generation is not
    * read as the follow-up's outcome.
    */
-  async inspect(rid: string, timeoutMs?: number): Promise<{ view: RunView; gen?: number }> {
+  async inspect(rid: string, timeoutMs?: number): Promise<{ view: RunView; gen?: number; exact?: ExactFacts }> {
     const r = await this.read(`describe ${rid}`, ['describe', '--key', rid, '--json'], timeoutMs);
     if (r.timedOut) throw new DsaError(`dsa describe ${rid} timed out`, { exit: r.exit, stdout: r.stdout, stderr: r.stderr, transient: true });
     if (r.signal) throw new DsaError(`dsa describe ${rid} ended by signal ${r.signal}`, { exit: r.exit, stdout: r.stdout, stderr: r.stderr, transient: true });
@@ -356,7 +396,8 @@ export class Dsa {
     const d = parseWhole(r.stdout);
     if (!d) throw new DsaError(`dsa describe ${rid}: unparsable output`, r);
     const gens = (Array.isArray(d.calls) ? d.calls as Json[] : []).map(c => c.gen).filter((g): g is number => typeof g === 'number');
-    return { view: toRunView(rid, d), ...(gens.length ? { gen: Math.max(...gens) } : {}) };
+    const exact = exactFacts(d);
+    return { view: toRunView(rid, d), ...(gens.length ? { gen: Math.max(...gens) } : {}), ...(exact ? { exact } : {}) };
   }
 
   /**
@@ -520,6 +561,23 @@ function sessionRefusal(r: Spawned): string | undefined {
   if (r.timedOut || r.signal || r.exit === 0 || r.exit === 75 || r.exit === 3) return undefined;
   const text = `${str(parseWhole(r.stdout)?.reason)}\n${r.stderr}`;
   return /\b(?:unknown|unrecognized|unexpected)\b[^\n]*--session\b/i.test(text) ? tail(text) : undefined;
+}
+
+/**
+ * DL2: the exactness facts of a described call (dsa 1.3.0): the last call's `exact` object. A rebuilt call
+ * names the reason it could not be exact (`no-capture`, ...); an exact one has the cache ratio of its first
+ * provider request and the cost of the call.
+ */
+export function exactFacts(d: Json): ExactFacts | undefined {
+  const calls = Array.isArray(d.calls) ? [...d.calls as Json[]] : [];
+  for (const call of calls.reverse()) {
+    const e = call.exact;
+    if (!e || typeof e !== 'object') continue;
+    const x = e as Json;
+    if (x.mode !== 'exact' && x.mode !== 'rebuilt') continue;
+    return { mode: x.mode, ...(typeof x.reason === 'string' ? { reason: x.reason } : {}), ...(typeof x.firstCacheRatio === 'number' ? { firstCacheRatio: x.firstCacheRatio } : {}), ...(typeof x.costUsd === 'number' ? { costUsd: x.costUsd } : {}) };
+  }
+  return undefined;
 }
 
 /**
