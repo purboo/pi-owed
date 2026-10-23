@@ -18,6 +18,10 @@
 // an id dsa refuses (not /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/) is rejected (exit 1); without the flag an inherited
 // $DSA_SESSION is used unless DSA_CALL/DSA_EXEC is set (an unusable inherited value is ignored), as dsa does;
 // $FAKE_DSA_DIR/old-run makes run refuse --session like dsa < 1.0.31 (exit 1, reason `Unknown or repeated option --session`).
+// dsa 1.3.0: `run --origin-session <pi session id>` names the session an exact run pins; `$FAKE_DSA_DIR/old-origin`
+// makes run refuse it like dsa < 1.3.0 (exit 1, reason `Unknown or repeated option --origin-session`) and `--help`
+// advertise no such option (the feature probe). A run with context "exact" reports the `exact` facts of its call
+// (mode, reason, firstCacheRatio, costUsd) on describe, like dsa 1.3.0.
 // Forwarded follow-up: $FAKE_DSA_DIR/forward-follow-up exists → a follow-up to a running (not sealed) call is applied
 // without a new generation (reply without `generation`, events forward + delivered, text kept in runs[rid].forwards).
 // Stale describe: $FAKE_DSA_DIR/stale-describe = <n>: after the next applied follow-up, the following n describes of
@@ -150,9 +154,10 @@ function execute(s, run, kind, message) {
 function invalid(id, reason) { return new Exit(1, { request: id ?? null, applied: false, reason }); }
 
 function runCmd(args) {
-  const { values, positionals } = flags(args, { request: 'value', spec: 'value', cwd: 'value', labels: 'value', json: 'flag', 'wait-ms': 'value', ...(existsSync(join(DIR, 'old-run')) ? {} : { session: 'value' }) });
+  const { values, positionals } = flags(args, { request: 'value', spec: 'value', cwd: 'value', labels: 'value', json: 'flag', 'wait-ms': 'value', ...(existsSync(join(DIR, 'old-run')) ? {} : { session: 'value' }), ...(existsSync(join(DIR, 'old-origin')) ? {} : { 'origin-session': 'value' }) });
   const id = values.request, file = values.spec, SID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
   if (values.session !== undefined && !SID.test(values.session)) return invalid(id, '--session must be a pi session id ([A-Za-z0-9._:-], at most 128 characters)');
+  if (values['origin-session'] !== undefined && !SID.test(values['origin-session'])) return invalid(id, '--origin-session must be a pi session id ([A-Za-z0-9._:-], at most 128 characters)');
   const inherited = process.env.DSA_CALL || process.env.DSA_EXEC ? undefined : process.env.DSA_SESSION;
   const sid = values.session ?? (inherited && SID.test(inherited) ? inherited : undefined), session = sid !== undefined ? { session: sid } : {};
   if (!id || !file || positionals.length) return invalid(id, 'usage: run --request <id> --spec <file|-> [--labels <json>] [--cwd <dir>] [--json]');
@@ -171,7 +176,7 @@ function runCmd(args) {
   const content = sha(JSON.stringify(['run', spec_digest, Object.keys(labels).sort().map(k => [k, labels[k]]), cwd]));
   const s = load(), prior = s.requests[id];
   if (prior && prior.content !== content) return new Exit(3, { request: id, error: 'request-conflict', ...(prior.wid ? { wid: prior.wid } : {}), spec_digest: prior.spec_digest, state: describeOf(s, id).state });
-  if (prior?.decided) { log({ cmd: 'run', request: id, exit: prior.exit, created: false, ...session }); return new Exit(prior.exit, prior.exit === 0 ? { ...prior.reply, created: false } : prior.reply); }
+  if (prior?.decided) { log({ cmd: 'run', request: id, exit: prior.exit, created: false, ...session, ...(values['origin-session'] ? { originSession: values['origin-session'] } : {}) }); return new Exit(prior.exit, prior.exit === 0 ? { ...prior.reply, created: false } : prior.reply); }
   const f = prior ? undefined : fault('run');
   if (f?.mode === 'none') return faulted(f, id);
   if (!prior) {
@@ -184,13 +189,13 @@ function runCmd(args) {
     Object.assign(req, { decided: true, exit: 1, reply: { request: id, applied: false, reason: 'spec names no agent', spec_digest } }); save(s);
     log({ cmd: 'run', request: id, exit: 1 }); return new Exit(1, req.reply);
   }
-  const wid = `w${++s.wids}`;
-  const run = s.runs[id] = { rid: id, wid, labels, cwd, agent: typeof spec.agent === 'string' ? spec.agent : 'tasks', gen: 1, execs: 0, state: 'running', questions: [], steers: [] };
+  const wid = existsSync(join(DIR, 'wid')) ? readFileSync(join(DIR, 'wid'), 'utf8').trim() : `w${++s.wids}`;
+  const run = s.runs[id] = { rid: id, wid, labels, cwd, agent: typeof spec.agent === 'string' ? spec.agent : 'tasks', gen: 1, execs: 0, state: 'running', questions: [], steers: [], ...(spec.context === 'exact' ? { exact: { mode: 'exact', firstCacheRatio: 0.97, costUsd: 0.031, requests: [{ input: 1000, cacheRead: 97000, output: 500, costUsd: 0.031 }] } } : {}) };
   Object.assign(req, { decided: true, wid, exit: 0, reply: { request: id, wid, created: true, spec_digest } });
   emit(s, run, 'submitted', {});
   const executed = execute(s, run, 'run');
   save(s);
-  log({ cmd: 'run', request: id, exit: f ? f.exit : 0, created: true, executed, ...(f ? { fault: f.mode } : {}), ...session });
+  log({ cmd: 'run', request: id, exit: f ? f.exit : 0, created: true, executed, ...(f ? { fault: f.mode } : {}), ...session, ...(values['origin-session'] ? { originSession: values['origin-session'] } : {}) });
   if (f) return f.exit === 75 ? new Exit(75, { request: id, pending: true, reason: `fault: ${f.mode}` }) : new Exit(f.exit, { request: id, applied: false, reason: 'fault' });
   return new Exit(0, req.reply);
 }
@@ -256,12 +261,19 @@ function describeOf(s, id) {
   if (run.pruned) return { state: 'pruned', wid: run.wid, pruned: { status: run.status === 'ok' ? 'done' : 'failed', endedAt: run.pruned }, ...head };
   const sealed = run.state === 'sealed';
   return { state: run.state, wid: run.wid, ...head, status: sealed ? (run.status === 'ok' ? 'done' : 'failed') : 'running', ...(sealed && run.error ? { error: run.error } : {}),
-    calls: [{ key: 'main', gen: run.gen, phase: sealed ? 'sealed' : run.state, agent: run.agent, ...(sealed ? { status: run.status, ok: run.status === 'ok', ...(run.error ? { error: run.error } : {}), output: run.output ?? '' } : {}) }],
+    calls: [{ key: 'main', gen: run.gen, phase: sealed ? 'sealed' : run.state, agent: run.agent, ...(sealed ? { status: run.status, ok: run.status === 'ok', ...(run.error ? { error: run.error } : {}), output: run.output ?? '' } : {}) , ...(run.exact ? { exact: run.exact } : {}) }],
     ...(run.state === 'asking' ? { questions: run.questions.map(q => ({ qid: q.qid, rev: q.rev, to: `${run.wid}/main`, call: `${run.wid}@1/main@${run.gen}`, text: q.text })) } : {}),
     ...(run.lastFence ? { lastFence: run.lastFence } : {}) };
 }
 function describeCmd(args) {
   const { values, positionals } = flags(args, { key: 'value', json: 'flag' });
+  if (values.key === undefined && positionals.length === 1) {
+    // dsa 1.3.0: `describe <wid> --json` describes a workflow by its id (the call address `w1@1/main@1`).
+    const s = load(), run = Object.values(s.runs).find(r => r.wid === positionals[0]);
+    if (!run) return invalid(undefined, `unknown workflow ${positionals[0]}`);
+    process.stdout.write(`${JSON.stringify(describeOf(s, run.rid), null, 2)}\n`);
+    return new Exit(0);
+  }
   if (!values.key || positionals.length) throw new Error('describe needs --key <request id>');
   const s = load();
   let view = describeOf(s, values.key);
@@ -326,6 +338,13 @@ function eventsCmd(args) {
   return new Exit(0, { head: more ? page.at(-1).cursor : head, more });
 }
 
+function helpCmd(args) {
+  flags(args, {});
+  const origin = existsSync(join(DIR, 'old-origin')) ? '' : ' [--origin-session <id>]';
+  process.stdout.write(`pi-durable-subagents: run --request <id> [--wake caller] --spec <file|-> [--labels <json>] [--session <id>]${origin} [--cwd <dir>] [--json] [--wait-ms <n>]\n`);
+  return new Exit(0);
+}
+
 function hook(args) {
   const s = load();
   if (command === 'fake-prune') { const run = s.runs[args[0]]; if (!run || run.state !== 'sealed') throw new Error(`cannot prune ${args[0]}`); run.pruned = Date.now(); }
@@ -346,7 +365,7 @@ function describeFault() {
 }
 if (command === 'describe') describeFault();
 
-const commands = { run: runCmd, send: sendCmd, describe: describeCmd, events: eventsCmd, 'fake-prune': hook, 'fake-compact': hook };
+const commands = { run: runCmd, send: sendCmd, describe: describeCmd, events: eventsCmd, 'fake-prune': hook, 'fake-compact': hook, help: helpCmd, '--help': helpCmd };
 const unlocked = { hold: holdCmd, leases: leasesCmd };
 let result;
 if (unlocked[command]) {
