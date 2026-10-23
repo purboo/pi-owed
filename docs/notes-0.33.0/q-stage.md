@@ -164,16 +164,17 @@ weakened; only the inventory rows changed.
 
 All Node, TypeScript and test commands run through `/tmp/owed-ipc/run.sh` on IPC.
 
-Final tree `9dfd88bad963bcad4cc2171f9c9ed4d0f9757ea2` (tree
-`41255bc1d043b22d33e5712ea5ad656c001b7a45`):
+Final tree `732bf57c787655f40967d83e9b93e9faa1c53cb5` (tree
+`91567ef5117669c73231321e7ca14be29793db47`), with the three F1–F3 fixes and
+this note:
 
 - `npm run typecheck` plus the focused regression set (`stage0330`,
-  `confirm-timeout`, `flow`, `needs-structure`, `english`, `surface`, `decide`):
-  121 tests, 121 pass, 0 fail; log `/tmp/owed-ipc/logs/q-stage-1-015109.log`
-  (same sources, tree `590b84f11e5cf0527d99fbb7923fea73233a2f42`).
+  `confirm-timeout`, `flow`, `needs-structure`, `english`, `surface`, `plan`,
+  `decide`): 127 tests, 127 pass, 0 fail; log
+  `/tmp/owed-ipc/logs/q-stage-1-074312.log`.
 - `npm run typecheck` plus the full suite
   (`node --test --test-concurrency=2 --test-reporter=tap "test/**/*.test.ts"`):
-  2274 tests, 2274 pass, 0 fail; log `/tmp/owed-ipc/logs/q-stage-1-021916.log`.
+  2293 tests, 2293 pass, 0 fail; log `/tmp/owed-ipc/logs/q-stage-1-074446.log`.
 
 The commit after the tested tree changes only this note file, which no owed
 invariant covers (`inv:typecheck` reads `src/**`, `test/**`, `tsconfig.json`,
@@ -185,6 +186,11 @@ checkpoint `9e756f07a029b33daaf04c7f6ba1038e69339563` passed `npm run typecheck`
 typecheck with two narrowing errors (log `/tmp/owed-ipc/logs/q-stage-1-121956.log`),
 the next failed seven tests (log `/tmp/owed-ipc/logs/q-stage-1-122101.log`) and
 the first full run failed two tests (log `/tmp/owed-ipc/logs/q-stage-1-011143.log`).
+The pre-rebase tree `9dfd88bad963bcad4cc2171f9c9ed4d0f9757ea2` (tree
+`41255bc1d043b22d33e5712ea5ad656c001b7a45`) passed the focused set (121 tests,
+log `/tmp/owed-ipc/logs/q-stage-1-015109.log`) and the full suite (2274 tests,
+log `/tmp/owed-ipc/logs/q-stage-1-021916.log`); it is superseded by the rebased
+tree above.
 
 Known limits: a crash between the plan file write and the ledger append is not a
 transaction across the filesystem and the ledger, so the `<!-- owed S<n> -->`
