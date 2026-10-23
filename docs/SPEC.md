@@ -13,6 +13,20 @@ Identities are claims (`--as`); the subagent rails (§2.1.3 and the writer-workt
 rail §2.1.7) are rails against accidents and instructions, not security
 boundaries: a process can unset the variables or change directory.
 
+### Compatibility (0.33)
+
+0.33 adds the optional ledger kinds `stage`, `accept`, `reject` and `overturn`,
+the optional field `via` on entries recorded by a fork's A act (§11.3) and the
+optional plan mapping `drive.delegate` (§12.2). No existing kind, field or enum
+changes; plans and ledgers from 0.32 replay unchanged, and a plan without
+`drive.delegate` behaves as in 0.32. Older readers refuse a plan that sets
+`drive.delegate` (unknown drive key); upgrade every reader before recording it
+or a stage. Per-version snapshots rebuild on first use; restart upgraded
+drivers and pi sessions. Delegate forks (§11.4) need a dsa whose `run` accepts
+`--origin-session` (pi-durable-subagents >= 1.3.0, feature-detected); with an
+older dsa wakes are delivered as in 0.32. The driver's dsa read timeout
+default is 15000 ms (§12.10).
+
 ### Compatibility (0.32)
 
 0.32 adds no plan key, ledger kind, field or enum. Plans and ledgers from
@@ -5542,6 +5556,85 @@ ledger holds the measurements the halt concerns). Every other owner or parent
 act stays refused (D25.3); the refusal of a fork names `owed stage`. An A act
 is recorded as the owner act it is, plus the field `via: "fork:<dsa call>"`.
 
+### 11.4 Delegate forks (0.33, DL)
+
+When the recorded plan has `drive.delegate` whose `on` lists a wake's kind
+(`question`, `writer-stop`, `review-asks`, `infra-halt`, `needs-owner`), the
+owed extension in the top-level pi session that follows the driver does not
+deliver that Needs-you wake as a turn. It launches one exact fork of this
+session for the node:
+
+```
+dsa run --request <rid> --spec - --labels '{"owed_fork":"<node>","owed_wake":"<wake id>"}' \
+        --cwd <repo> --session <pi session id> --origin-session <pi session id> --json
+```
+
+The spec is one agent call `{agent: "delegate", context: "exact", task:
+<packet>}`; it names no model. dsa call budgets take tokens or cost only, so
+`budget.wall_s` becomes the call's `timeoutMs` and `budget.rounds` is stated
+in the packet. The wake id is a sha256 of node, kind, facts and source text.
+The packet gives the node, the wake text, the ledger head seq as
+`read_through_seq`, the plan file's sha256 (the value a `plan_patch` must carry
+as `before_sha256`), the enabled A acts (`a_acts` minus kinds an overturn
+disabled) and the rules: reread the node's ledger entries since that seq
+first; produce a bundle and run `owed stage`; never fork or launch subagents;
+long reproductions only as dsa command calls; stop after staging.
+
+- **Limits (DL1, DL6).** At most `max` forks run at once; later wakes queue in
+  order. A node has at most one fork: a wake of a node whose fork is running,
+  or that has an open stage made by one of its forks, is not forked and not
+  queued; it is delivered as a wake whose kind `on` does not list (not a
+  refusal). "Open" means neither accepted nor rejected; a stage that is only
+  computed stale (§11.3) still blocks until it is rejected. A stage is made by
+  a fork when its author is `writer:<call address>` whose run wid carries the
+  label `owed_fork=<node>` (resolved through `dsa describe <wid> --json`,
+  cached per process). The check reads the ledger at the time of the wake, so
+  once the stage is accepted or rejected the next wake forks again. A queued
+  wake is checked again when dequeued. A ledger read or describe failure
+  blocks nothing.
+- **Settle (DL2).** When forks end, one batched `owed-delegate` message
+  (`owed delegate: <n> fork(s) settled`) lists for each staging fork at most
+  ten lines (summary, class, evidence count, `owed accept S<n>`), adds
+  `owed accept --all-b` when more than one class-B stage is open, and for a
+  fork that ended without a stage (failed, budget, stopped, no conclusion)
+  the original wake text unchanged plus one line naming the fork call and
+  why. Each fork has a dsa `exact:` line: cache ratio and cost, or
+  `rebuilt (<reason>)`. A stage belongs to a fork only when the fork's own call
+  recorded it.
+- **No lost wakes (DL3).** A launch refusal (including of a queued wake)
+  delivers the original wake at once. At session shutdown the pending forks
+  (running and queued) are written to `<drive dir>/drive/delegate.json` when
+  any exist; when the session follows the driver again they are delivered as
+  their original wakes and never forked a second time. The store is best
+  effort.
+- **0.32 behaviour (DL4).** Nothing is delegated without `drive.delegate` or
+  with an empty `on`, without a pi session id, inside a dsa call
+  (`DSA_CALL`/`DSA_EXEC`), or when the dsa binary does not accept
+  `--origin-session` (probed once per binary with `--help`).
+
+### 11.5 Full questions, tool retries and plan receipts (0.33, UX)
+
+- `owed question <node> [qid] [--json]` (CLI only) prints the node's open
+  writer questions unclipped: `decision_needed`, numbered options (label,
+  scope, cost, risk, preferred), facts, tried, classification candidates
+  (label, evidence, unproven), question text, call address, qid/rev and the
+  answer command. A qid matches exactly or as a prefix. It is a read (no
+  principal, no ledger write). An unknown node or a node without an open slot
+  refuses; no open question gives an empty list. Wake messages and `owed why`
+  lines that clip a question end with `→ owed question <node> <qid>`, or
+  `→ owed question <node>` when the line has no qid.
+- The recording pi tools `decide`, `answer`, `resume`, `plan`, `edit`,
+  `amend`, `rule`, `stage` and `accept` run once more, re-reading their inputs,
+  after an optimistic-concurrency refusal (code `busy`, or `refused` whose
+  message holds `changed; retry`); the output then starts with
+  `retried once after: <first refusal>`. A second refusal is returned; other
+  refusals are not retried. Under `OWED_CONFIRM=owner` the retry asks again.
+- `owed_plan`, `owed_edit` and `owed_amend` end with `recorded plan #<seq> blob
+  <sha> file sha256 <sha>`: the recorded ledger blob and the sha256 of the plan
+  bytes recorded. `ops.planSet` compares the plan file with the bytes to record
+  under the ledger lock (working-tree plans, no `--rev`) and refuses with
+  `plan file changed; retry (…), nothing recorded` when they differ.
+
 ## 12. Driver
 
 `owed drive` is a deterministic program that runs the mechanical loop
@@ -5598,11 +5691,11 @@ drive:
     max: 4                 # 1-16, default 4
     budget: { rounds: 3, wall_s: 900 }
     a_acts: [preferred-answer, infra-resume]   # optional A acts a fork may perform
-    appends: [docs/notes-0.33.0/q-stage.md]    # repository paths a stage may append to
+    appends: [docs/decisions.md]               # repository paths a stage may append to
 ```
 
-`on`, `max` and `budget` are consumed by the delegate node; `a_acts` and
-`appends` by the stage node: `a_acts` lists the A acts a fork may perform
+`on`, `max` and `budget` configure delegate forks (§11.4); `a_acts` and
+`appends` configure stages (§11.3): `a_acts` lists the A acts a fork may perform
 (default none), and `appends` lists the repository paths a staged bundle may
 append to. A plan without `drive.delegate` behaves exactly as before: the
 parsed plan keeps no new fields, and an old ledger replays byte-identically.
@@ -6628,9 +6721,11 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   `describe --key <send id>` (`applied`/`rejected` are taken as dsa's decision;
   only an `absent`/`pending` send is re-sent); read the stored blobs a retry
   needs; `decide`; execute the actions in order. A failed describe leaves that
-  node without an action this pass. (0.11, F4) A describe that timed out is
-  retried once in the same pass before the `describe-failed` notify; a node
-  waiting after `resume --after` gets no `describe-failed` notify. A failed
+  node without an action this pass. (0.33, HT1) A describe that timed out or
+  ended by a signal is retried by the dsa client (§12.10); one still failing
+  is transient (no `describe-failed` notify, no halt before 10 minutes). A
+  non-transient describe failure notifies `describe-failed`; a node waiting
+  after `resume --after` gets no `describe-failed` notify. A failed
   send's report (outcome `error`, e.g. a ledger lock timeout) names the node,
   send kind, reason and target run like any other send line; its text line
   names the node as a word (0.12, G3.6: `send <kind> (<reason>) for node
@@ -6755,7 +6850,7 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
     kind or field is added; a busy pass therefore need not append an entry
     just to escape the immutable sealed 75 on its next pass.
   - `describe --key <request> --json` is polled by the program, one invocation
-    at a time (2 s invocation timeout, interval clamped to 50 ms..5 s,
+    at a time (the read timeout of §12.10, default 15 s; interval clamped to 50 ms..5 s,
     default 1 s). There is no total measurement timeout or model polling.
     The one command's `calls[0].data.exitCode/signal`, seal and output tail
     are read independently of model-run status. Normal command exit 0 is
@@ -7375,3 +7470,44 @@ receipt directly; absence of this status line is not proof of delivery.
   stay:true}`. `--json` output and the tool details gain `ready: string[]` and
   `driver: false` only together with the line. Nothing starts automatically; a
   failure computing the hint adds nothing.
+
+### 12.10 Transient dsa reads and newer generations (0.33, HT)
+
+- **Read retries (HT1).** The driver's dsa client retries a read-only call
+  (describe, the attest status poll, status, leases, the `--help` feature
+  probe) that timed out or ended by a signal up to three more times after
+  1 s, 3 s and 9 s. A non-zero exit or unparsable output is not retried, nor
+  is a read after a hard stop. One-shot reads outside the driver keep a single
+  attempt. A read that still fails is transient: the driver logs one loop line
+  `dsa read unavailable: <call>: <reason>` on the first failure of a streak,
+  records no halt or wake and decides the action again on a later pass. When
+  the same read (keyed by its call, `describe <rid>`; `attest <node>` for the
+  attest poll, whose request id changes with the ledger length) has
+  failed continuously for 10 minutes, the driver halts the node with
+  `dsa reads failing for 10 min: <call>: <last error>`. A success ends the
+  streak. A transient feature probe is not cached.
+- **Read timeout (HT2).** Reads use 15000 ms unless the environment variable
+  `OWED_DSA_SHORT_MS` is an integer 1000-120000; any other value is ignored
+  with one stderr line `owed: ignoring OWED_DSA_SHORT_MS="<v>" (expected an
+  integer 1000-120000); read timeout 15000 ms`. Write calls (run, send, stop)
+  keep their timeouts.
+- **Attest result from the ledger (HT3).** Before an attest error (status read
+  failure, lost response, unknown or invalid seal, refused hold, signal) halts
+  the node, the driver checks the ledger: when every measured job has a
+  pass/fail observation with the same subject, obligation and key recorded at
+  or after the attest's start, the attest is treated as returned (accepted, or
+  measured and not yet accepted) and logs `attest result taken from ledger
+  #<seqs>`; the next pass merges or repairs as usual. Otherwise a transient
+  status read is retried on a later pass, and other errors halt with
+  `attest error: …` as before.
+- **Newer generations (HT4).** Before executing a halt or a new repair
+  follow-up decided on a sealed or pruned writer view, the driver describes
+  the writer again. When a newer generation is running, queued or asking, it
+  does neither, logs `waiting: <call> generation <n> is running` (no wake) and
+  decides again after that generation ends. Each driver halt records the
+  writer generation it concerned in `drive/halt-gens.json`; each pass writes
+  `drive/stale-halts.json` with the active halts whose writer now runs a newer
+  generation. While a driver runs, `owed status` and `owed why` show such a
+  halt as `stale halt: generation <n> is running (<call>)`. Halts recorded
+  without a generation (before 0.33) are never shown as stale. No ledger kind
+  or field is added.
