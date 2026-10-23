@@ -5457,6 +5457,91 @@ complete packet when calling the runner, retaining slot `cwd` and
 `packet` or `subagents.task`. CLI/ops structured dispatch results retain the
 full executable task; the pi content exemption and bounds are specified above.
 
+### 11.3 Staged decisions (0.33, SG)
+
+A writer, a fork or any process may prepare a decision as a *stage*; the parent
+or owner accepts it. The stage is a ledger entry, so the prepared decision and
+its acceptance are auditable and replayable.
+
+- `owed_stage` {node, file, cwd?, as?} (CLI `owed stage <node> --file
+  BUNDLE.json`) records a stage for `node` from a JSON bundle file. The bundle
+  has exactly these fields (an unknown field refuses): `ruling_text` (required
+  string, at most 8000 chars), `decide` (optional; the `owed_decide`
+  parameters `nodes`, `writes`, `resume`, `expect`, `writer`, `allow_only`,
+  `after`, `remeasure`; never `defer`), `plan_patch` (optional `{file,
+  before_sha256, after_sha256, self_check?}`, where `file` is a complete
+  patched copy of the plan file and the shas are of the current and patched
+  plan bytes), `appends` (optional `[{path, text}]`; each path must be listed
+  in the plan's `drive.delegate.appends`, text at most 4000 chars, the token
+  `{ruling}` is replaced by the accept's ruling seq), `evidence` (optional
+  `[{path, sha256}]`; each path is a repository path inside the repository),
+  `read_through_seq` (required integer, the highest ledger
+  seq the author read), `touches` (optional node ids and repository paths
+  besides the node itself), `class` (`A`, `B` or `C`; default `B`) and
+  `summary` (required, at most 10 lines of at most 160 chars: decision, basis,
+  what changes). Stage validates that the node exists, `read_through_seq` is
+  at most the ledger head, the plan file currently hashes to `before_sha256`,
+  the patched file parses as a plan and hashes to `after_sha256` and every
+  evidence file matches its sha; it stores the bundle bytes and the patched
+  plan bytes as blobs. The `plan_patch.file` and the `evidence` paths are
+  repository paths: a path that is not repository-relative, or that resolves
+  outside the repository, refuses. Any failure refuses with nothing recorded.
+- `owed_stages` {all?, cwd?} (CLI `owed stages [--all] [--json]`) lists the
+  stages: id (`S<seq>`), node, class, state (`open`, `stale` with its reason,
+  `unknown` with its reason when the open questions could not be read,
+  `accepted` or `rejected`), age, the summary's first line and the accept
+  command. `--all` also lists accepted and rejected stages. A listing never
+  fails as a whole because one stage's questions could not be read: that stage
+  is listed as `unknown` with the reason `cannot verify open questions`, and the
+  other stages are still listed. The status stage line counts the open stages
+  only (`Stages: <n> open (<k> stale) → owed stages`); an unverifiable stage
+  is counted as neither and is listed with its reason.
+- `owed_accept` {stage?, amend?, all_b?, as?, cwd?} (CLI `owed accept S<n>
+  [--amend TEXT]`, `owed accept --all-b`) is a parent or owner act. It
+  re-checks the stage and refuses a stale stage (`stage S<n> is stale: <reason>
+  — fork again`) and a stage whose touches overlap an older open stage
+  (`accept S<m> first or reject it`). It then applies, in order: the patched
+  plan file (atomic replace, recorded as `owed_plan` records a plan with note
+  `accept S<n>`; downgrades need owner authority as today, and an accept by
+  `owner:pi` records the note as the delegated-owner reason), the decide
+  (exactly as `owed_decide`, its ruling text = the `--amend` text or
+  `ruling_text`, suffixed ` [stage S<n>]`), the `accept` entry (stage id,
+  ruling seq, plan seq, by) and the appends (each text prefixed by `<!-- owed
+  S<n> -->`; a retry skips an append whose marker is already present). A
+  crash after the plan file write and before the ledger append leaves the
+  stage open; a retry detects the file already equal to the patched bytes and
+  continues. The output leads with `accepted S<n>: ruling #<seq>` and lists
+  what was applied. `owed accept --all-b` accepts every open, non-stale
+  class-B stage in seq order and stops at the first refusal.
+  A stage records the principal that wrote the proposal (`by`). Inside a
+  pi-durable-subagents call that principal is never `parent` or `owner`
+  (D25.3): the stage records `writer:<dsa call>`, so a delegated proposal is
+  never attributed to the main agent.
+- `owed_reject` {stage, note, as?, cwd?} (CLI `owed reject S<n> --note TEXT`)
+  records a rejection (parent or owner).
+- `owed_overturn` {seq, note, as?, cwd?} (CLI `owed overturn <seq> --note
+  TEXT`) records that a fork A act was wrong (parent or owner). From then on
+  that A act kind is disabled for forks until a later plan re-lists it in
+  `drive.delegate.a_acts`; status shows `A act <kind> disabled by overturn
+  #<seq>`.
+
+A stage is `open` until it is accepted, rejected or stale. Staleness is
+computed, never stored: the ledger after `read_through_seq` holds an entry
+that names the stage's node (or one of its `touches` nodes) and changes that
+node's facts (question, halt, submit/candidate, review, ruling, decide, plan,
+resume, abandon, merge, measured observation). A stage with a `plan_patch` is
+also stale when the plan file no longer hashes to its `before_sha256`.
+
+A fork (a dsa call whose run label is `owed_fork=<node>`, resolved once per
+process through `dsa describe`) may stage for any node and may additionally
+perform the A acts of its own node that the plan's `drive.delegate.a_acts`
+enables: `preferred-answer` (answering an open writer question with the
+option the writer marked `preferred`) and `infra-resume` (resuming the node
+from a halt whose reason is a dsa read or attest infrastructure error when the
+ledger holds the measurements the halt concerns). Every other owner or parent
+act stays refused (D25.3); the refusal of a fork names `owed stage`. An A act
+is recorded as the owner act it is, plus the field `via: "fork:<dsa call>"`.
+
 ## 12. Driver
 
 `owed drive` is a deterministic program that runs the mechanical loop
@@ -5502,6 +5587,25 @@ changing or removing `drive:` is never a downgrade (a plan change by parent).
 keeps its canonical bytes and sha; a 0.6.x parser refuses a plan that sets it.
 `min_free_mb` (0.11, F2.3) is kept the same way (`minFreeMb(plan)` applies the
 default 2048).
+
+**`drive.delegate` (0.33, SG).** Optional mapping under `drive`; unknown keys
+refuse:
+
+```yaml
+drive:
+  delegate:
+    on: [question, writer-stop, review-asks, infra-halt, needs-owner]  # optional wake kinds
+    max: 4                 # 1-16, default 4
+    budget: { rounds: 3, wall_s: 900 }
+    a_acts: [preferred-answer, infra-resume]   # optional A acts a fork may perform
+    appends: [docs/notes-0.33.0/q-stage.md]    # repository paths a stage may append to
+```
+
+`on`, `max` and `budget` are consumed by the delegate node; `a_acts` and
+`appends` by the stage node: `a_acts` lists the A acts a fork may perform
+(default none), and `appends` lists the repository paths a staged bundle may
+append to. A plan without `drive.delegate` behaves exactly as before: the
+parsed plan keeps no new fields, and an old ledger replays byte-identically.
 
 **Node `drive` (0.7.0).** A node may set its own roles:
 
@@ -5551,6 +5655,17 @@ retry re-sends the exact stored bytes with the same id. Entry kinds `launch`,
 `send`, `halt` (§5) may be appended only by role `parent`; launch and send
 must name the node's current open slot (node and attempt), and so must a halt.
 
+- Entry kinds `stage`, `accept`, `reject` and `overturn` (0.33, SG) are new
+  and optional; a ledger without them replays identically, and no existing
+  kind, field or enum changes. A `stage` entry names its node, class, the
+  bundle blob and (with a plan patch) the patched plan blob, its
+  `read_through_seq`, its `touches` and the question fingerprint of the node's
+  open writer questions. An `accept` entry names the stage, its ruling seq and
+  (with a plan patch) its plan seq. A `reject` entry names the stage and its
+  note. An `overturn` entry names the seq of the overturned act and its note.
+- The optional field `via` (0.33, SG) appears only on entries recorded as a
+  fork A act: `via: "fork:<dsa call>"`. It is absent from every other entry,
+  and an old ledger without it replays byte-identically.
 - Project id `projectId(state)`: the first 12 hex of the genesis entry hash
   (stable per ledger).
 - Run id `runId(project, node, attempt, role, n?)` =
