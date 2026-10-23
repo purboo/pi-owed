@@ -26,7 +26,9 @@ import { leaseText } from './lease.ts';
 import { driveOnce, liveRunLines } from './drive-run.ts';
 import { DriveWatch, driveDir, readLock, driveStart, driveStatus, driveStop, driverLine, readyHint, readyHintText, renderDriveStart, renderDriveStatus, renderDriveStop, revalidator } from './drive-bg.ts';
 import { parentOverlapWarnings } from './parentops.ts';
-import { allowanceLabel, amendLines, carryLine, notCarriedLine, oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderWhy, renderReport, renderStatus, renderStatusBrief, waiverRecordedText, measuredPendingText } from './views.ts';
+import { allowanceLabel, amendLines, carryLine, notCarriedLine, oneLine, recordedPlanLine, renderBrief, renderEntry, renderGc, renderReceipt, renderWhy, renderReport, renderStatus, renderStatusBrief, waiverRecordedText, measuredPendingText } from './views.ts';
+import { withQuestionPointers } from './needs.ts';
+import { sha256 } from './canon.ts';
 import type { EscapeClass, Principal, Role } from './types.ts';
 
 const as = Type.Optional(Type.String({ pattern: '^(owner|parent|writer|reviewer|executor):.+$', description: 'Principal role:id; parent defaults to parent:pi.' }));
@@ -133,6 +135,32 @@ const ADOPT_SHOWN = 50;
 const candidateLines = (v: { seq: number; commit: string; base: string; changed: number }): string => `Candidate: ${v.commit} (submit #${v.seq})\nBase: ${v.base}\nChanged files: ${v.changed}`;
 function result(details: unknown, text: string) { return { content: [{ type: 'text' as const, text: alreadyRecordedText((details ?? {}) as { alreadyRecorded?: number }) ?? text }], details }; }
 
+/**
+ * UX2: the refusals a recording tool retries once, after re-reading: an optimistic-concurrency refusal
+ * (`changed; retry`, `ledger changed during accept …; retry`) and a busy ledger (exit 75). Every other refusal is
+ * returned as today.
+ */
+export function optimisticRefusal(error: unknown): string | undefined {
+  if (!(error instanceof OwedError)) return undefined;
+  if (error.code === 'busy') return error.message;
+  if (error.code === 'refused' && /changed\b[^;]*; retry/i.test(error.message)) return error.message;
+  return undefined;
+}
+/** UX2: one retry after the caller re-reads; a second refusal is returned as today. */
+export async function retryOnce<T>(act: () => Promise<T>): Promise<{ value: T; retried?: string }> {
+  try { return { value: await act() }; }
+  catch (e) {
+    const first = optimisticRefusal(e);
+    if (first === undefined) throw e;
+    return { value: await act(), retried: first };
+  }
+}
+/** UX2: the recording tools that retry once after an optimistic-concurrency refusal. */
+const RETRY_TOOLS = new Set(['decide', 'answer', 'resume', 'plan', 'edit', 'amend', 'rule', 'stage', 'accept']);
+/** UX2: the retry notice, first line of the tool output. */
+function withRetryNote<T extends { content: { type: string; text?: string }[] }>(r: T, first: string): T {
+  return { ...r, content: r.content.map(c => c.type === 'text' ? { ...c, text: `retried once after: ${first}\n${c.text ?? ''}` } : c) };
+}
 export default function owed(pi: ExtensionAPI): void {
   if (isMainThread) pi = remoteAPI(pi);
   // Wake-ups of the background driver (D17.7): one follower per driver log; the session gets one follow-up message per
@@ -155,7 +183,7 @@ export default function owed(pi: ExtensionAPI): void {
       return agent.session === session && (held.state !== 'live' && held.state !== 'foreign' || ownsDriver(repo, held.owner, session));
     } });
   };
-  const makeWatch = () => new DriveWatch(content => pi.sendMessage({ customType: 'owed-drive', display: true, content }, { triggerTurn: true, deliverAs: 'followUp' }), 0, { busy, session: () => agent.session, revalidate: repo => revalidator({ cwd: repo }) });
+  const makeWatch = () => new DriveWatch(content => pi.sendMessage({ customType: 'owed-drive', display: true, content: withQuestionPointers(content) }, { triggerTurn: true, deliverAs: 'followUp' }), 0, { busy, session: () => agent.session, revalidate: repo => revalidator({ cwd: repo }) });
   let idleWatch = makeIdle(), watch = makeWatch(), registryAt = -Infinity;
   const useContext = (ctx: ExtensionContext) => {
     const session = sessionIdentity(ctx);
@@ -199,7 +227,10 @@ export default function owed(pi: ExtensionAPI): void {
           try {
             // G2.3 (F5): refused everywhere, reads included; ownership still governs attachment after refusal.
             if ((p as { as?: unknown }).as === 'parent:drive') throw new OwedError(ops.DRIVER_CLAIM);
-            return await run(p, ctx, dir, signal);
+            // UX2: a recording tool retries once after an optimistic-concurrency refusal; it re-reads by acting again.
+            if (!RETRY_TOOLS.has(name)) return await run(p, ctx, dir, signal);
+            const { value, retried } = await retryOnce(() => run(p, ctx, dir, signal));
+            return retried === undefined ? value : withRetryNote(value, retried);
           } finally { if (agent.session === session) await attachDriver(dir); }
         }
         catch (e) {
@@ -342,7 +373,7 @@ export default function owed(pi: ExtensionAPI): void {
     // N1.3: one line per node whose candidate the plan entry carried, and (23:4x) one per carry it skipped.
     const carried = await ops.carriedBy({ cwd: dir, plan: r.seq }), carriedText = [...carried.map(carryLine), ...notCarried.map(notCarriedLine)].map(l => `${l}\n`).join('');
     const data = { ...r, ...(pending.length ? { warning: warning.trim() } : {}), warnings, notes, ...(carried.length ? { carried } : {}), ...(notCarried.length ? { notCarried } : {}), ...(ready ? { ready, driver: false } : {}) };
-    return result(data, `${await ops.recordedPlanReceipt({cwd:dir,entry:r})}\n${carriedText}${warning}${d?.allowance !== undefined ? `Downgrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}\n` : ''}${ready ? `${readyHintText(ready, 'pi')}\n` : ''}${[...notes,...warnings].map(w => `${w}\n`).join('')}${renderStatusBrief(state)}`);
+    return result(data, `${await ops.recordedPlanReceipt({cwd:dir,entry:r})}\n${carriedText}${warning}${d?.allowance !== undefined ? `Downgrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}\n` : ''}${ready ? `${readyHintText(ready, 'pi')}\n` : ''}${[...notes,...warnings].map(w => `${w}\n`).join('')}${renderStatusBrief(state)}\n${recordedPlanLine(r, sha256(read.plan))}`);
   });
   tool('edit', 'ED1/ED2/ME1: atomically edit node/check fields, an invariant or the top-level drive mapping in the recorded plan file, keeping comments and layout outside the targets. nodes and drive are exclusive with each other, node and invariant; identical YAML path=value assignments apply to every listed node (deduplicated in order), validating only the final plan. Append one plan (same authority and carries as owed_plan (CLI: owed plan)), one optional ruling naming all nodes and one optional resume per node in one lock. node_new requires a single node. A refusal records nothing and leaves the file unchanged; dry_run returns one diff and the downgrades.', Type.Object({ node: Type.Optional(node), nodes: Type.Optional(Type.Array(node,{ minItems:1 })), invariant: Type.Optional(node), drive: Type.Optional(Type.Boolean()), node_new: Type.Optional(Type.Boolean()), set: Type.Optional(Type.Array(Type.String({ minLength:1 }))), unset: Type.Optional(Type.Array(Type.String({ minLength:1 }))), note: Type.String({ minLength:1 }), plan: Type.Optional(Type.String({ minLength:1 })), rule: Type.Optional(Type.String({ minLength:1 })), writer: Type.Optional(Type.Boolean()), resume: Type.Optional(Type.Boolean()), after: Type.Optional(Type.Union([Type.String(),Type.Array(Type.String())])), expect: Type.Optional(Type.Literal('report')), dry_run: Type.Optional(Type.Boolean()), as, cwd }), async (p, ctx, dir, signal) => {
     const args: ops.EditArgs = { ...p, cwd:dir, signal }, e = await ops.editPreview(args);
@@ -350,7 +381,7 @@ export default function owed(pi: ExtensionAPI): void {
     const gaps = e.downgrades.length ? uncoveredDowngrades(e.prior,e.plan,e.downgrades) : [], who = p.as ?? (gaps.length ? ownerDefault() : 'parent:pi');
     if (gaps.length && principal(who).role !== 'owner') throw new OwedError(`Only owner may confirm plan downgrades; not covered by an allowance of the current plan: ${gaps.map(g => `${g.node}: ${g.what}`).join('; ')}`);
     const r = await ops.edit({ ...args, ...await actor(ctx,dir,who,`Edit plan ${oneLine(e.path)}\nDowngraded obligations: ${JSON.stringify(e.downgrades)}`, { Note:p.note, Selftest:e.warnings.filter(w => w.startsWith('selftest:')).join('\n') },signal) }) as ops.EditResult;
-    return result(r,[renderEntry(r.plan),...r.carried.map(carryLine),...r.notCarried.map(notCarriedLine),...(r.rule ? [renderEntry(r.rule)] : []),...(r.resumes ?? (r.resume ? [r.resume] : [])).map(renderEntry),`Wrote ${r.path}`,...(r.warnings ?? []),renderStatusBrief(await ops.status({ cwd: dir }))].join('\n'));
+    return result(r,[renderEntry(r.plan),...r.carried.map(carryLine),...r.notCarried.map(notCarriedLine),...(r.rule ? [renderEntry(r.rule)] : []),...(r.resumes ?? (r.resume ? [r.resume] : [])).map(renderEntry),`Wrote ${r.path}`,...(r.warnings ?? []),renderStatusBrief(await ops.status({ cwd: dir })),recordedPlanLine(r.plan, r.fileSha)].join('\n'));
   });
   tool('amend', "Widen one node's writes (N3): appends the paths to the node's writes in the plan file (plan, else the latest plan entry's path; comments and layout kept), records it as owed_plan (CLI: owed plan) would (same authority: widening is a downgrade, so the owner or an `allow` rule of the current plan) and, in the same lock, a ruling naming the node with the limit, which the writer receives and reviewers acknowledge. Refused, with nothing recorded and the file unchanged, when the file has unrecorded edits.", Type.Object({ node, writes: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: 'Paths to add, bare or prefixed with + (e.g. "src/x.ts"); covered paths are unchanged; removal is not offered.' }), note: Type.String({ minLength: 1, description: 'The limit of the widening (recorded in the ruling and the plan note).' }), plan: Type.Optional(Type.String({ minLength: 1, description: "Plan file, relative to cwd; defaults to the latest plan entry's path." })), as, cwd }), async (p, ctx, dir, signal) => {
     const args = { cwd: dir, node: p.node, writes: p.writes, note: p.note, ...(p.plan !== undefined ? { plan: p.plan } : {}) };
@@ -360,7 +391,7 @@ export default function owed(pi: ExtensionAPI): void {
     if (gaps.length && principal(who).role !== 'owner') { const hint = writesHint(e.prior, e.plan, gaps); throw new OwedError(`Only owner may confirm plan downgrades; not covered by an allowance of the current plan: ${gaps.map(g => `${g.node}: ${g.what}`).join('; ')}${hint ? `\n${hint}` : ''}`); }
     const r = await ops.amend({ ...await actor(ctx, dir, who, `Amend plan ${oneLine(e.path)}: widen writes of ${oneLine(p.node)}\nAdded writes: ${JSON.stringify(e.added)}\nDowngraded obligations: ${JSON.stringify(downgrades)}\nDowngrades reduce acceptance requirements.`, { Limit: p.note }, signal), ...args, signal });
     const d = principal(who).role === 'owner' || !r.plan ? undefined : (await ops.report({ cwd: dir, since: r.plan.seq - 1 })).downgrades.find(x => x.seq === r.plan?.seq);
-    return result(r, `${amendLines(r).join('\n')}${ops.amendLimitText(r)}${(r.warnings ?? []).map(w => `\n${w}`).join('')}${d?.allowance !== undefined ? `\nDowngrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}` : ''}\n${renderStatusBrief(await ops.status({ cwd: dir }))}`);
+    return result(r, `${amendLines(r).join('\n')}${ops.amendLimitText(r)}${(r.warnings ?? []).map(w => `\n${w}`).join('')}${d?.allowance !== undefined ? `\nDowngrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}` : ''}\n${renderStatusBrief(await ops.status({ cwd: dir }))}${r.plan ? `\n${recordedPlanLine(r.plan, r.fileSha)}` : ''}`);
   });
   tool('init', 'Owner: initialize the owed ledger from a plan file (genesis), (the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner, showing the trunk commit, plan sha, node count and invariants). Returns at once; the genesis attest of the invariants then runs in the background in this session, owed_status (CLI: owed status) shows its progress, and the session gets one message when it ends.', Type.Object({ plan: Type.String({ minLength: 1, description: 'Plan file path, relative to cwd.' }), lease: Type.Optional(Type.Boolean({ description: 'False skips leasing the background genesis attest.' })), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, ownerDefault(), ['owner'], 'initialize the ledger');
