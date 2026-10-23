@@ -137,12 +137,16 @@ export async function questionFingerprint(s: State, node: string, client: Pick<D
   return canonical(questions.sort((a,b) => a.qid.localeCompare(b.qid) || a.rev-b.rev));
 }
 const forkCache = new Map<string, Promise<{node:string;call:string} | undefined>>();
-/** Once per call identity per process, including failed resolutions. */
+/**
+ * Once per call identity per process, including failed resolutions. The call address
+ * (`<wid>@<rev>/<key>@<gen>`) is not a request id, so it is resolved through `describe <wid> --json`;
+ * `describe --key` takes a request id and refuses a call address.
+ */
 export async function forkPrincipal(cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<{node:string;call:string} | undefined> {
   const call = env.DSA_CALL || env.DSA_EXEC; if (!call) return;
   let p = forkCache.get(call);
   if (!p) {
-    p = new Dsa({cwd}).describe(call).then(view => typeof view.labels?.owed_fork === 'string' && view.labels.owed_fork ? {node:view.labels.owed_fork,call} : undefined).catch(() => undefined);
+    p = new Dsa({cwd}).describeCall(call).then(view => typeof view.labels?.owed_fork === 'string' && view.labels.owed_fork ? {node:view.labels.owed_fork,call} : undefined).catch(() => undefined);
     forkCache.set(call,p);
   }
   return p;
