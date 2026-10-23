@@ -79,8 +79,8 @@ export interface DelegateForkState {
   /** The exactness facts of the call (dsa 1.3.0). */
   exact?: { mode: string; reason?: string; firstCacheRatio?: number; costUsd?: number };
 }
-/** A stage a fork recorded (the bundle's summary, class and evidence files); `seq` is the ledger seq of the stage. */
-export interface DelegateStage { id: string; node: string; class: string; summary: string; evidence: number; seq?: number; }
+/** A stage a fork recorded (the bundle's summary, class, evidence files and its author). */
+export interface DelegateStage { id: string; node: string; class: string; summary: string; evidence: number; seq?: number; /** The ledger author of the stage (`writer:<call address>` for a stage made inside a dsa call). */ by?: string; }
 /** The delegate's ports: what it needs from the session, the ledger and dsa. */
 export interface DelegatePorts {
   /** The plan's delegate facts, or undefined when the plan does not delegate. */
@@ -90,7 +90,7 @@ export interface DelegatePorts {
   /** DL4: whether the dsa accepts `--origin-session` (dsa >= 1.3.0); an older dsa behaves as 0.32.0. */
   supported: () => Promise<boolean>;
   /** Launch one exact fork. */
-  launch: (l: DelegateLaunch) => Promise<{ ok: true; id: string } | { ok: false; reason: string }>;
+  launch: (l: DelegateLaunch) => Promise<{ ok: true; id: string; wid?: string } | { ok: false; reason: string }>;
   /** The state of a launched fork. */
   inspect: (id: string) => Promise<DelegateForkState>;
   /** The open stages of the repository (the fork's own stage is the one recorded after its launch). */
@@ -105,10 +105,12 @@ export interface DelegatePorts {
  * (at most `max` at once, later wakes queue in order), and reports every settled fork as one batched message.
  */
 export class Delegate {
-  private readonly running = new Map<string, { wake: DelegateWake; id: string; seq: number }>();
+  private readonly running = new Map<string, { wake: DelegateWake; id: string; seq: number; wid?: string }>();
   private readonly queue: { wake: DelegateWake }[] = [];
   /** The wake ids this session already handled (forked, queued or handed back): a wake is never forked twice. */
   private readonly handled = new Set<string>();
+  /** The wake ids that are pending in the persisted store: a restart must not fork them again. */
+  private stored?: Set<string>;
   private exact?: boolean;
   private readonly ports: DelegatePorts;
   constructor(ports: DelegatePorts) { this.ports = ports; }
@@ -123,7 +125,8 @@ export class Delegate {
     for (const wake of wakes) {
       const plan = await this.plan_();
       if (!plan || !plan.on.includes(wake.kind) || !await this.exact_() || !this.ports.session()) { left.push(wake); continue; }
-      if (this.handled.has(wake.id)) continue;   // DL3: this wake is answered by a fork already; it is not repeated
+      // DL3: this wake is answered by a fork already (this session or the store of an earlier one); it is not repeated.
+      if (this.handled.has(wake.id) || (await this.stored_()).has(wake.id)) continue;
       this.handled.add(wake.id);
       if (this.running.has(wake.node) || this.running.size >= plan.max) { this.queue.push({ wake }); continue; }
       if (!await this.launch(wake, plan)) { this.handled.delete(wake.id); left.push(wake); }
@@ -155,6 +158,7 @@ export class Delegate {
     await this.ports.store.save(pending);
     this.running.clear();
     this.queue.length = 0;
+    this.stored = new Set(pending.map(p => p.wake.id));
     return pending.map(p => p.wake);
   }
 
@@ -164,6 +168,8 @@ export class Delegate {
    */
   async restore(): Promise<void> {
     const pending = await this.ports.store.load();
+    this.stored = new Set();
+    if (!pending.length) return;   // nothing pending: the store stays untouched
     await this.ports.store.save([]);
     for (const p of pending) { this.handled.add(p.wake.id); this.ports.deliver(p.wake.text); }
   }
@@ -175,13 +181,21 @@ export class Delegate {
     if (this.exact === undefined) this.exact = await this.ports.supported().catch(() => false);
     return this.exact;
   }
+  /** DL3: the wake ids that are pending in the persisted store (a restart must not fork them again). */
+  private async stored_(): Promise<Set<string>> {
+    if (!this.stored) {
+      const pending = await this.ports.store.load().catch(() => [] as { wake: DelegateWake; id: string }[]);
+      this.stored = new Set(pending.map(p => p.wake.id));
+    }
+    return this.stored;
+  }
   private async launch(wake: DelegateWake, plan: DelegatePlan): Promise<boolean> {
     const id = `delegate:${wake.node}:${wake.id}`.slice(0, 120);
     const labels = { owed_fork: wake.node, owed_wake: wake.id };
     const spec = { agent: 'delegate', task: delegatePacket(wake, plan), context: 'exact', ...(plan.budget?.wall_s !== undefined ? { timeoutMs: plan.budget.wall_s * 1000 } : {}) };
     const r = await this.ports.launch({ wake, id, labels, spec });
     if (!r.ok) return false;
-    this.running.set(wake.node, { wake, id: r.id, seq: plan.seq });
+    this.running.set(wake.node, { wake, id: r.id, seq: plan.seq, ...(r.wid !== undefined ? { wid: r.wid } : {}) });
     return true;
   }
   private async startQueued(): Promise<void> {
@@ -191,7 +205,8 @@ export class Delegate {
       if (this.running.size >= plan.max) return;
       if (this.running.has(item.wake.node)) continue;
       this.queue.splice(this.queue.indexOf(item), 1);
-      if (!await this.launch(item.wake, plan)) this.handled.delete(item.wake.id);
+      // DL3: a refused launch delivers the original wake at once; the wake is never lost.
+      if (!await this.launch(item.wake, plan)) { this.handled.delete(item.wake.id); this.ports.deliver(item.wake.text); }
     }
   }
 }
@@ -226,11 +241,11 @@ export function delegatePacket(wake: DelegateWake, plan: DelegatePlan): string {
 }
 
 /** DL2: the batched message of the forks that settled. */
-function settleText(settled: { wake: DelegateWake; id: string; seq: number; state: DelegateForkState }[], stages: DelegateStage[]): string {
+function settleText(settled: { wake: DelegateWake; id: string; seq: number; wid?: string; state: DelegateForkState }[], stages: DelegateStage[]): string {
   const lines: string[] = [`owed delegate: ${settled.length} fork(s) settled`];
   const used = new Set<string>();
   for (const fork of settled) {
-    const stage = stages.find(s => s.node === fork.wake.node && (s.seq === undefined || s.seq > fork.seq) && !used.has(s.id));
+    const stage = stages.find(s => s.node === fork.wake.node && stageOfFork(s, fork) && !used.has(s.id));
     if (stage) {
       used.add(stage.id);
       lines.push(...stageLines(fork.wake, stage, fork.state.exact));
@@ -241,6 +256,22 @@ function settleText(settled: { wake: DelegateWake; id: string; seq: number; stat
   const classB = stages.filter(s => s.class === 'B').length;
   if (classB > 1) lines.push('owed accept --all-b');
   return lines.join('\n');
+}
+/**
+ * DL2: a stage belongs to a fork only when the fork's own call made it: the author of a stage recorded inside a
+ * dsa call is `writer:<call address>`, and the call address starts with the run's wid. A stage of the same node by
+ * another actor is not the fork's stage and does not hide it.
+ */
+function stageOfFork(stage: DelegateStage, fork: { wid?: string; seq: number }): boolean {
+  if (fork.wid === undefined) return false;
+  if (authorWid(stage.by) !== fork.wid) return false;
+  return stage.seq === undefined || stage.seq > fork.seq;
+}
+/** The run wid of a stage author: `writer:<wid>@<rev>/<key>@<gen>` names the run the call belongs to. */
+function authorWid(by: string | undefined): string | undefined {
+  if (!by || !by.startsWith('writer:')) return undefined;
+  const wid = by.slice('writer:'.length).split('@')[0]?.trim();
+  return wid ? wid : undefined;
 }
 /** DL2: a staged fork: its summary, class, evidence count and the accept command, at most ten lines. */
 function stageLines(wake: DelegateWake, stage: DelegateStage, exact: DelegateForkState['exact']): string[] {
