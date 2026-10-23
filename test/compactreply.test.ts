@@ -110,7 +110,9 @@ test('CR2 plan and amend preserve carried candidates and act lines without progr
     assert.equal(carried.kind, 'submit');
     assert.ok(text(planned).includes(views.carryLine(carried)));
     compact(text(planned)); assert.match(text(planned), new RegExp(`submit #${sub.seq}`));
-    assert.ok(text(planned).endsWith(detailsLine));
+    // UX3: the plan output keeps the details line and ends with the recorded plan receipt.
+    assert.ok(text(planned).includes(detailsLine));
+    assert.match(text(planned), /recorded plan #\d+ blob [0-9a-f]{64} file sha256 [0-9a-f]{64}$/);
     for (const warning of p.warnings) assert.ok(text(planned).includes(warning));
     const amended = await r.h.call('amend', { node: 'a', writes: ['+extra.txt'], note: 'Only the extra fixture file' });
     const a = amended.details as Awaited<ReturnType<typeof ops.amend>>;
@@ -118,12 +120,14 @@ test('CR2 plan and amend preserve carried candidates and act lines without progr
     const complete = { ...a, plan: es.find(e => e.seq === a.plan?.seq), rule: es.find(e => e.seq === a.rule?.seq), carried: es.filter(e => e.kind === 'submit' && e.seq > a.plan!.seq && e.seq < a.rule!.seq) } as Awaited<ReturnType<typeof ops.amend>>;
     assert.ok(text(amended).startsWith(views.amendLines(complete).join('\n')));
     assert.ok(a.plan, 'a real widening records a plan');
-    assert.equal(a.plan.by, 'owner:pi'); compact(text(amended)); assert.ok(text(amended).endsWith(detailsLine));
+    assert.equal(a.plan.by, 'owner:pi'); compact(text(amended)); assert.ok(text(amended).includes(detailsLine));
+    assert.match(text(amended), /recorded plan #\d+ blob [0-9a-f]{64} file sha256 [0-9a-f]{64}$/);
     const edited = await r.h.call('edit', { node: 'b', set: ['title=Updated'], note: 'Clarify the title' });
     const e = edited.details as ops.EditResult;
     const editEntry = (await (await Ledger.open(r.cwd)).read()).find(x => x.seq === e.plan.seq)!;
     assert.ok(text(edited).startsWith(views.renderEntry(editEntry)));
-    assert.ok(text(edited).includes(`Wrote ${e.path}`)); compact(text(edited)); assert.ok(text(edited).endsWith(detailsLine));
+    assert.ok(text(edited).includes(`Wrote ${e.path}`)); compact(text(edited)); assert.ok(text(edited).includes(detailsLine));
+    assert.match(text(edited), /recorded plan #\d+ blob [0-9a-f]{64} file sha256 [0-9a-f]{64}$/);
     const preview = await r.h.call('edit', { node: 'b', set: ['title=Preview'], note: 'Preview only', dry_run: true });
     assert.match(text(preview), /Downgrades:/); assert.doesNotMatch(text(preview), /Details: owed status/);
   } finally { await r.cleanup(); }

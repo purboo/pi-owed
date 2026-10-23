@@ -419,7 +419,9 @@ test('H1.3 pi owed_plan: the hint names owed_drive start stay:true; details read
     const r = await h.call('plan', { plan: 'p.json' });
     assert.notEqual(r.isError, true, r.text);
     assert.match(r.text, /(?:^|\n)ready: a \(1\); no driver is running: owed_drive \{action:"start", stay:true\} \(CLI: owed drive --detach --stay\)(?:\nwarning: [^\n]*)*\nowed:/);
-    assert.ok(r.text.endsWith('Details: owed status · owed why <node>'));
+    // UX3: the plan output keeps the details line and ends with the recorded plan receipt.
+    assert.ok(r.text.includes('Details: owed status · owed why <node>'));
+    assert.match(r.text, /recorded plan #\d+ blob [0-9a-f]{64} file sha256 [0-9a-f]{64}$/);
     assert.deepEqual(r.details.ready, ['a']); assert.equal(r.details.driver, false);
     liveLock(f.lock);
     await f.put('p2.json', JSON.stringify(planOf(node('a'), node('b'))));

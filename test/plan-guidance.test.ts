@@ -151,7 +151,9 @@ test('H2.2 check-less nodes: owed_init ends with warnings; owed_plan retains war
     assert.deepEqual(withoutCost((plan.details as { warnings: string[] }).warnings), [WARN('b'), WARN('d'), WARN('e')]);
     assert.deepEqual(text(plan).split('\n').filter(l => l.startsWith('warning: node ')), [WARN('b'), WARN('d'), WARN('e')]);
     assert.ok(text(plan).indexOf(WARN('e')) < text(plan).indexOf('owed:'));
-    assert.ok(text(plan).endsWith('Details: owed status · owed why <node>'));
+    // UX3: the plan output keeps the details line and ends with the recorded plan receipt.
+    assert.ok(text(plan).includes('Details: owed status · owed why <node>'));
+    assert.match(text(plan), /recorded plan #\d+ blob [0-9a-f]{64} file sha256 [0-9a-f]{64}$/);
     const all = { ...next, nodes: (next.nodes as Spec[]).map(n => ({ ...n, checks: [check(`${n.id as string}-unit`)] })) };
     await r.put('all.json', JSON.stringify(all)); await r.commit();
     const clean = await h.call('plan', { plan: 'all.json' });
