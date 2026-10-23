@@ -180,6 +180,34 @@ async function delegateStages(repo: string): Promise<DelegateStage[]> {
     return out;
   } catch { return []; }
 }
+/** DL6: the fork node of a run wid (its `owed_fork` label), once per repo and wid; a failed describe is not kept. */
+const forkNodes = new Map<string, string | null>();
+async function delegateForkNode(repo: string, client: Dsa, wid: string): Promise<string | undefined> {
+  const key = `${repo}\u0000${wid}`;
+  const known = forkNodes.get(key);
+  if (known !== undefined) return known ?? undefined;
+  const view = await client.describeCall(wid).catch(() => undefined);
+  if (!view) return undefined;
+  const node = typeof view.labels?.owed_fork === 'string' && view.labels.owed_fork ? view.labels.owed_fork : null;
+  forkNodes.set(key, node);
+  return node ?? undefined;
+}
+/**
+ * DL6: the nodes with an open stage (not accepted, not rejected) made by one of their forks. DL2 attribution: the stage
+ * author is `writer:<call address>` and the call's run carries `owed_fork=<node>` (dsa labels; nothing new is kept).
+ */
+async function delegateForkStageNodes(repo: string, client: Dsa | undefined): Promise<string[]> {
+  if (!client) return [];
+  const ledger = await Ledger.open(repo), entries = await ledger.read();
+  const nodes = new Set<string>();
+  for (const e of entries) {
+    if (e.kind !== 'stage' || stageClosed(entries, e) || !e.by.startsWith('writer:')) continue;
+    const wid = e.by.slice('writer:'.length).split('@')[0]?.trim();
+    const node = wid ? await delegateForkNode(repo, client, wid) : undefined;
+    if (node) nodes.add(node);
+  }
+  return [...nodes];
+}
 /** DL3: the pending forks of a repository, kept across a session quit (so a wake is never lost). */
 async function delegateStore(repo: string, list?: { wake: DelegateWake; id: string }[]): Promise<{ wake: DelegateWake; id: string }[]> {
   const file = join(await driveDir(repo), 'drive', 'delegate.json');
@@ -275,6 +303,7 @@ export default function owed(pi: ExtensionAPI): void {
       return { state: r.view.state, ...(r.view.status ? { status: r.view.status } : {}), ...(r.view.error ? { error: r.view.error } : {}), ...(r.exact ? { exact: r.exact } : {}) };
     },
     stages: () => delegateStages(repo),
+    forkStageNodes: () => delegateForkStageNodes(repo, delegateClient(repo, agent.session)),
     deliver: (content) => { pi.sendMessage({ customType: 'owed-delegate', display: true, content: withQuestionPointers(content) }, { triggerTurn: true, deliverAs: 'followUp' }); },
     store: {
       load: () => delegateStore(repo).then(list => list as { wake: DelegateWake; id: string }[]),

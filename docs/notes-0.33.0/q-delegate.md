@@ -197,3 +197,39 @@ call resolves a call address).
   message; it is not gated by the driver's own busy check.
 * dsa's `describe --key` still takes a request id; the fork's *call* address
   (needed for A acts inside a fork) is resolved through `describe <wid>`.
+
+## q-delegate-2: one fork per node condition (DL6)
+
+Live evidence: one needs-owner condition of node `greet` produced three forks (S4, S5, S14). The driver repeated the
+notify with a changed text, the wake id hashes the text, and a second wake of a running node was queued and forked
+as soon as the first fork settled.
+
+* `DelegatePorts.forkStageNodes()` (src/watch.ts) returns the nodes that have an open stage made by one of their
+  forks. The extension (src/extension.ts `delegateForkStageNodes`) reads the ledger at the time of the wake, keeps
+  stages that are neither accepted nor rejected, and attributes a stage by DL2: its author `writer:<call address>`
+  names the run wid, and `describe <wid> --json` gives the run label `owed_fork=<node>`. A stage by another actor
+  (`owner:pi`, a parent) or by an ordinary writer call (no `owed_fork`) blocks nothing; a stage made by the fork of
+  node b blocks b, whatever node it stages for. The wid -> node result is cached per process (labels never change); a
+  failed describe is not cached and blocks nothing for that wake.
+* `Delegate.take`: after the plan/kind/session checks and the DL3 already-handled check, a wake whose node has a
+  running fork of this delegate, or is in `forkStageNodes()`, is returned to the turn exactly like a kind the plan
+  does not delegate. It is not marked handled, not queued and not a refusal (no extra delivery). Once the stage is
+  accepted or rejected, the next wake of that node forks again (DL6.2).
+* `Delegate.startQueued`: a queued wake (queued only because `max` forks were running) is checked again when it is
+  dequeued; if its node now has a running fork or an open fork stage, its original wake text is delivered instead
+  of a fork. This closes the second path to a duplicate fork (two wakes of one node queued behind `max`).
+* No new persisted state (DL6.3): fork identity comes only from the dsa run labels.
+
+Changed existing test: `DL1: one fork per node, later wakes queue in order` asserted that a second wake of a running
+node is queued and forked when the first fork settles; that is exactly the duplicate fork DL6 forbids. It is replaced
+by `DL6.4c: a second wake of a node whose fork is running is delivered, not queued`. Queueing behind `max` for other
+nodes stays covered by `DL1: at most max forks run at once` and `DL3: a refused queued launch ...`.
+
+Interpretation and limits:
+* "Open" means not accepted and not rejected in the ledger. The ledger has no superseded stage; a stage that is only
+  computed stale (SG3) still blocks until the parent rejects it (`owed reject S<n>`), because staleness needs the plan
+  history and a dsa question describe the delegate does not run at wake time.
+* A ledger read error or a failed describe blocks nothing (fail open): the wake forks as before DL6 rather than being
+  held back.
+* The extension's dsa resolution is covered by the existing describe-by-call-address test with the fake dsa; the DL6
+  tests drive the Delegate through its ports.

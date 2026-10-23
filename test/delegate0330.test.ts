@@ -45,8 +45,6 @@ interface Harness {
 const widOf = (node: string) => `wid-${node}`;
 /** The author of a stage made inside the fork's dsa call: `writer:<call address>`. */
 const authorOf = (node: string) => `writer:${widOf(node)}@1/tasks:0@1`;
-/** DL6: the delegate ports plus the fork-stage port (the nodes with an open stage made by one of their forks). */
-type Dl6Ports = DelegatePorts & { forkStageNodes: () => Promise<string[]> };
 
 function harness(o: { plan?: DelegatePlan; session?: string } = {}): Harness {
   const launches: Launch[] = [], delivered: string[] = [];
@@ -58,7 +56,7 @@ function harness(o: { plan?: DelegatePlan; session?: string } = {}): Harness {
     delegate: undefined as unknown as Delegate, launches, delivered, staged, state, plan: o.plan, session: o.session ?? 'pi-session-1', pending, launches_ok: true, refused, closed: new Set<string>(), saves: 0,
     restart: () => new Delegate(ports()),
   };
-  const ports = (): Dl6Ports => ({
+  const ports = (): DelegatePorts => ({
     facts: async () => h.plan,
     session: () => h.session,
     supported: async () => true,
@@ -307,7 +305,7 @@ test('DL3: the next session hands the pending wakes back and does not fork them 
     forkStageNodes: async () => [],
     deliver: (text) => { h.delivered.push(text); },
     store: { load: async () => h.pending.map(p => ({ wake: p.wake, id: p.id })), save: async (list) => { h.pending.length = 0; h.pending.push(...list); } },
-  } as Dl6Ports);
+  });
   await next.restore();
   assert.equal(h.delivered.length, 1);
   assert.match(h.delivered[0]!, /Needs you: a/);
@@ -346,7 +344,7 @@ test('DL4: an older dsa without --origin-session delivers the wake as a turn', a
       forkStageNodes: async () => [],
       deliver: (t) => { h.delivered.push(t); },
       store: { load: async () => [], save: async () => {} },
-    } as Dl6Ports);
+    });
     const rest = await delegate.take([wake('a')]);
     assert.equal(rest.length, 1, 'the wake is delivered as a turn');
     assert.equal(h.delivered.length, 0);
