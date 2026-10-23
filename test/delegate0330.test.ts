@@ -209,6 +209,32 @@ test('DL3: wakes queued or in flight when the session quits are delivered as the
   assert.deepEqual(handed.map(w => w.node).sort(), ['a', 'b']);
 });
 
+test('DL3: the next session hands the pending wakes back and does not fork them again', async () => {
+  const h = harness({ plan: { on: ['question'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
+  const w = wake('a');
+  await h.delegate.take([w]);
+  await h.delegate.quit();
+  assert.equal(h.pending.length, 1, 'the pending fork is kept across the quit');
+  // A new session follows the driver again: the wake is delivered as its original wake.
+  const next = new Delegate({
+    facts: async () => h.plan,
+    session: () => h.session,
+    supported: async () => true,
+    launch: async (l) => { h.launches.push(l); return { ok: true, id: l.id }; },
+    inspect: async (id) => h.state.get(id) ?? { state: 'absent' },
+    stages: async () => [],
+    deliver: (text) => { h.delivered.push(text); },
+    store: { load: async () => h.pending.map(p => ({ wake: p.wake, id: p.id })), save: async (list) => { h.pending.length = 0; h.pending.push(...list); } },
+  });
+  await next.restore();
+  assert.equal(h.delivered.length, 1);
+  assert.match(h.delivered[0]!, /Needs you: a/);
+  const launches = h.launches.length;
+  const rest = await next.take([w]);
+  assert.equal(rest.length, 0, 'the handed-back wake is not forked a second time');
+  assert.equal(h.launches.length, launches);
+});
+
 test('DL4: without a session id the wake is delivered as a turn', async () => {
   const h = harness({ plan: { on: ['question'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
   h.session = undefined;

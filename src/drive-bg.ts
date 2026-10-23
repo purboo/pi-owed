@@ -366,11 +366,15 @@ export function delegateWake(j: Record<string, unknown> | undefined, text: strin
   if (!kind) return undefined;
   const need = plainNeed(j, text);
   if (!need) return undefined;
-  return { node, kind, text: need, id: delegateWakeId(node, kind, source) };
+  const facts = typeof j.facts === 'number' ? j.facts : 0;
+  return { node, kind, text: need, id: delegateWakeId(node, kind, source, facts) };
 }
-/** DL1: the stable id of a node wake (the same wake keeps its id across sessions, so a fork is never launched twice). */
-export function delegateWakeId(node: string, kind: DelegateKind, source: string): string {
-  return `${node}:${kind}:${sha256(`${node}\u0000${kind}\u0000${source}`).slice(0, 16)}`;
+/**
+ * DL1: the stable id of a node wake (the same wake keeps its id across sessions, so a fork is never launched twice).
+ * The fact mark is part of it: two different facts of the same node are two wakes, the same fact is one.
+ */
+export function delegateWakeId(node: string, kind: DelegateKind, source: string, facts = 0): string {
+  return `${node}:${kind}:${sha256(`${node}\u0000${kind}\u0000${facts}\u0000${source}`).slice(0, 16)}`;
 }
 /**
  * Which log lines wake the session (D17.7): halts, notifies (questions, owner-needed, stalled), rejected / conflicting
@@ -867,7 +871,8 @@ export class Follower {
     // DL1: the delegate may take the node wakes of this batch; a taken wake is not part of the turn.
     const kept = await this.divert(left);
     const message = this.message(kept, dropped.size);
-    try { await this.o.deliver(message); } catch { return undefined; }   // kept whole: revalidated again next tick
+    // A failed delivery keeps the lines that were not delivered; the taken wakes stay taken (their fork answers them).
+    try { await this.o.deliver(message); } catch { this.pending = [...kept, ...rest]; return undefined; }
     this.pending = rest;
     if (this.ended) this.stop();
     return message;
