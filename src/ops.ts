@@ -27,6 +27,7 @@ import { setupFailure, infraSource, observationsOf, resumeOf } from './reducer.t
 import { setupHint, setupSignature } from './remeasure-on.ts';
 import { withMachineLease, measurementScope, leaseResult, leaseWaitField } from './lease.ts';
 import type { Runtime } from './needs.ts';
+import { answerQuestion } from './needs.ts';
 import { withMeasuring, measuringScope, measuringRunning, measuringJob, assembleRuntime } from './activity.ts';
 import { unguardedPaths, mergeCoverage, sweepRed } from './sweep.ts';
 export { sweep } from './sweep.ts';
@@ -796,8 +797,24 @@ export async function planSet(o: Actor & { plan: string; rev?: string; path?: st
     const p = { plan:b.plan, sha:await ledger.putBlob(b.data), ...await admitSelftests({cwd:o.cwd,signal:o.signal},ledger,b.plan,b.sha,before.plan) };
     const notes = await planWriteNotes(o.cwd,b.plan,before.trunk.commit,before.plan);
     warnings.push(...p.lines, ...runFileLines(b.plan));
-    return ledger.withLock(async () => { checkAbort(o.signal); const skipped: NotCarried[] = [], entry = (await ledger.append((await planDrafts({ ...o, notCarried:skipped },ledger,p,before)).drafts))[0]!; o.notCarried?.push(...skipped); o.shellWarnings?.push(...warnings); o.planNotes?.push(...notes); return entry; });
+    return ledger.withLock(async () => { checkAbort(o.signal); await planFileUnchanged(o); const skipped: NotCarried[] = [], entry = (await ledger.append((await planDrafts({ ...o, notCarried:skipped },ledger,p,before)).drafts))[0]!; o.notCarried?.push(...skipped); o.shellWarnings?.push(...warnings); o.planNotes?.push(...notes); return entry; });
   });
+}
+/**
+ * UX3 (R1580): the plan file must still hold the bytes that are recorded, checked under the ledger lock. A file that
+ * changed since the caller read it would be recorded as an older plan version; nothing is recorded instead, and the
+ * caller retries after re-reading. A plan read from a commit (`--rev`) is not compared with the working tree.
+ */
+async function planFileUnchanged(o: { cwd: string; plan: string; path?: string; rev?: string }): Promise<void> {
+  if (o.rev !== undefined || !o.path) return;
+  const candidates = [resolve(o.cwd, o.path)];
+  try { candidates.push(resolve(await git.repoRoot(o.cwd), o.path)); } catch { /* outside a repository: the cwd path is the file */ }
+  for (const file of candidates) {
+    let current: string;
+    try { current = await readFile(file, 'utf8'); } catch { continue; }
+    if (current !== o.plan) throw new OwedError(`plan file changed; retry (${o.path} holds other bytes than the recorded plan)`);
+    return;
+  }
 }
 type PlanArgs = Actor & { rev?: string; path?: string; note?: string; notCarried?: NotCarried[] };
 /**
@@ -865,7 +882,7 @@ export interface AmendEdit {
   /** the ledger plan sha the edit starts from */
   planSha: string;
 }
-export interface AmendResult { warnings?: string[]; node: string; file: string; path: string; added: string[]; present: string[]; covered: AmendEdit['covered']; plan?: Entry; rule?: Entry; carried: SubmitEntry[]; notCarried: NotCarried[] }
+export interface AmendResult { warnings?: string[]; node: string; file: string; path: string; added: string[]; present: string[]; covered: AmendEdit['covered']; plan?: Entry; rule?: Entry; carried: SubmitEntry[]; notCarried: NotCarried[]; /** UX3: the sha256 of the plan file bytes that were recorded. */ fileSha?: string }
 type AmendArgs = Context & { signal?: AbortSignal; node: string; writes: string[]; note: string; plan?: string; source?: {file:string;path:string;text:string} };
 /** WA2: bare paths and +paths widen writes; removal and empty paths are refused. */
 export function amendPaths(writes: string[]): string[] {
@@ -989,13 +1006,13 @@ export async function amend(o: Actor & AmendArgs): Promise<AmendResult> {
     const plan = appended[0]!, ruled = appended.at(-1)!;
     try { await rename(temp,e.file); }
     catch (x) { throw new OwedError(`plan #${plan.seq} and rule #${ruled.seq} were recorded, but ${e.path} could not be replaced (${(x as NodeJS.ErrnoException).code ?? String(x)}): the file still holds the prior plan; the recorded plan is in ${temp}: move it over ${e.file}`,'internal'); }
-    return { node:o.node, file:e.file, path:e.path, added:e.added, present:e.present, covered:e.covered, plan, rule:ruled, warnings:p.lines, carried:appended.slice(1,-1).filter((x): x is SubmitEntry => x.kind === 'submit'), notCarried };
+    return { node:o.node, file:e.file, path:e.path, added:e.added, present:e.present, covered:e.covered, plan, rule:ruled, warnings:p.lines, carried:appended.slice(1,-1).filter((x): x is SubmitEntry => x.kind === 'submit'), notCarried, fileSha:sha256(e.next) };
   });  });
 }
 // ---------- ED: atomic node/check/invariant plan edits ----------
 export type EditArgs = Context & EditFields & { signal?: AbortSignal; note: string; plan?: string; rule?: string; writer?: boolean; resume?: boolean; after?: string | string[]; expect?: 'report'; dry_run?: boolean };
 export interface EditPreview { file: string; path: string; text: string; next: string; prior: Plan; plan: Plan; planSha: string; diff: string; downgrades: ReturnType<typeof planDowngrades>; warnings: string[]; notes: string[] }
-export interface EditResult { file: string; path: string; plan: Entry; rule?: Entry; resume?: Entry; resumes?: Entry[]; carried: SubmitEntry[]; notCarried: NotCarried[]; diff: string; warnings?: string[] }
+export interface EditResult { file: string; path: string; plan: Entry; rule?: Entry; resume?: Entry; resumes?: Entry[]; carried: SubmitEntry[]; notCarried: NotCarried[]; diff: string; warnings?: string[]; /** UX3: the sha256 of the plan file bytes that were recorded. */ fileSha?: string }
 async function prepareEdit(o: EditArgs, entries: Entry[], s: State): Promise<EditPreview> {
   inited(s);
   if (typeof o.note !== 'string' || !o.note.trim()) throw new OwedError('edit needs a non-empty note (--note TEXT)','usage');
@@ -1037,7 +1054,7 @@ export async function edit(o: Actor & EditArgs): Promise<EditResult | EditPrevie
       const plan = appended[0]!;
       try { await rename(temp,e.file); }
       catch (x) { throw new OwedError(`edit entries #${plan.seq}-#${appended.at(-1)!.seq} were recorded, but ${e.path} could not be replaced (${(x as NodeJS.ErrnoException).code ?? String(x)}): the recorded plan is in ${temp}: move it over ${e.file}`,'internal'); }
-      return { file:e.file, path:e.path, plan, ...(o.rule !== undefined ? { rule:appended.find(x => x.kind === 'rule')! } : {}), ...(o.resume ? ids.length > 1 ? { resumes:appended.filter(x => x.kind === 'resume') } : { resume:appended.at(-1)! } : {}), carried:appended.filter((x): x is SubmitEntry => x.kind === 'submit'), notCarried, diff:e.diff, ...((e.warnings.length || p.lines.length) ? { warnings:[...e.warnings.filter(l => !l.startsWith('selftest:') && !l.endsWith(': not self-tested')),...p.lines] } : {}) };
+      return { file:e.file, path:e.path, plan, ...(o.rule !== undefined ? { rule:appended.find(x => x.kind === 'rule')! } : {}), ...(o.resume ? ids.length > 1 ? { resumes:appended.filter(x => x.kind === 'resume') } : { resume:appended.at(-1)! } : {}), carried:appended.filter((x): x is SubmitEntry => x.kind === 'submit'), notCarried, diff:e.diff, fileSha:sha256(e.next), ...((e.warnings.length || p.lines.length) ? { warnings:[...e.warnings.filter(l => !l.startsWith('selftest:') && !l.endsWith(': not self-tested')),...p.lines] } : {}) };
     });
   });
 }
@@ -2689,6 +2706,36 @@ export async function mergedLines(cwd: string, merged: readonly { node: string; 
     if (count !== undefined && lines.length) lines[0] += `\n${housekeepingText(count)}`;
   } catch { /* A post-merge hint must never turn a committed merge into a refusal. */ }
   return lines;
+}
+/**
+ * UX1: the open questions of a node, whole. The questions live in dsa (the asking runs of the node's open slot);
+ * this is a read: it records nothing and never refuses for a missing question (an empty list is the answer).
+ */
+export async function question(o: Context & { node: string; qid?: string; dsa?: Pick<Dsa, 'describe'> }): Promise<import('./views.ts').QuestionView[]> {
+  const { state } = await load(await Ledger.open(o.cwd));
+  const n = state.nodes[o.node];
+  if (!n) throw new OwedError(`Node ${o.node} does not exist`);
+  if (!n.slot?.open) throw new OwedError(`Node ${o.node} has no open slot; open questions: none`);
+  const launches = n.runs.find(r => r.attempt === n.slot!.attempt)?.launches ?? [];
+  const client = o.dsa ?? new Dsa({ cwd: o.cwd }), out: import('./views.ts').QuestionView[] = [];
+  for (const launch of launches) {
+    const view = await client.describe(launch.rid);
+    if (view.state !== 'asking') continue;
+    for (const q of view.questions ?? []) {
+      if (o.qid !== undefined && q.qid !== o.qid && !q.qid.startsWith(o.qid)) continue;
+      const call = q.to ?? view.to ?? launch.rid;
+      out.push({ node: o.node, rid: launch.rid, role: launch.role, qid: q.qid, rev: q.rev,
+        ...(q.decision_needed !== undefined ? { decision_needed: q.decision_needed } : {}),
+        ...(q.options !== undefined ? { options: q.options } : {}),
+        ...(q.facts !== undefined ? { facts: q.facts } : {}),
+        ...(q.tried !== undefined ? { tried: q.tried } : {}),
+        ...(q.classification_candidates !== undefined ? { classification_candidates: q.classification_candidates } : {}),
+        question: q.question, call,
+        answer: answerQuestion(o.node, launch.rid, q.qid, q.rev),
+        tool: `owed_answer {node:${JSON.stringify(o.node)}, rid:${JSON.stringify(launch.rid)}, qid:${JSON.stringify(q.qid)}, text:"…"}` });
+    }
+  }
+  return out;
 }
 export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   const ledger = await Ledger.open(o.cwd), {state,entries,lookup} = await load(ledger);

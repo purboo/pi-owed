@@ -136,6 +136,30 @@ export function heldRuling(s: State, node: string): RuleEntry | undefined {
   const h = halted(s, node);
   return h && entriesOf(s).findLast((e): e is RuleEntry => e.kind === 'rule' && e.decision !== undefined && e.seq > h.seq && !e.prospective && e.nodes !== '*' && e.nodes.includes(node));
 }
+/** UX1: where the full text of a node's open question is printed (`owed question <node> [qid]`). */
+export const questionPointer = (node: string, qid?: string): string => `→ owed question ${node}${qid ? ` ${qid}` : ''}`;
+/** UX1: the node of a question wake line (`Needs you: <node> — …` or `<node>: …`). */
+const wakeNode = (line: string): string | undefined => {
+  const m = /^(?:Needs you: )?([^—:\n]+?)(?::| —)/.exec(line);
+  const node = m?.[1]?.trim();
+  return node && /^[A-Za-z0-9._:@+-]+$/.test(node) ? node : undefined;
+};
+/**
+ * UX1: a wake message that shows a question (or only part of one) points at the full question.
+ * The pointer is added once per line; a line that already names `owed question` keeps its own.
+ */
+export function withQuestionPointers(text: string): string {
+  return text.split('\n').map(line => {
+    if (line.includes('owed question')) return line;
+    const qid = /asks \(qid ([^,)]+)/.exec(line)?.[1];
+    const node = wakeNode(line);
+    if (!node) return line;
+    // A driver ask line names its question; a wake line names it through the answer command.
+    if (qid) return `${line} ${questionPointer(node, qid)}`;
+    if (/→ owed answer /.test(line) && /— decide /.test(line)) return `${line} ${questionPointer(node)}`;
+    return line;
+  }).join('\n');
+}
 export const resumeCommand = (node: string): string => `owed resume ${word(node)}`;
 export const heldRulingText = (node: string, seq: number): string => `held by ruling #${seq}; ${resumeCommand(node)} releases it`;
 /** RM1: ordered recovery commands; changing the agent affects only later reviewer launches. */
@@ -378,6 +402,8 @@ export const rejectedFixed = (node: string): string => `this attempt's request i
 /** SR4: a rejected send can be superseded without losing the attempt; rejected runs keep D15.1. */
 export const rejectedHalt = (node: string, what: 'run' | 'send', id: string, reason: string): string => `dsa rejected ${what} ${id}: ${oneLine(reason)}; ${what === 'run' ? rejectedFixed(node) : `the attempt is not lost: continue the run (e.g. a dsa follow-up), then \`owed decide ${node} --text "<retry run>"\`; a later resume, submit or send to this run supersedes this send; or \`owed abandon ${node}\``}`;
 const shell = (s: string): string => /[\r\n]/.test(s) ? `$'${s.replaceAll('\\','\\\\').replaceAll("'","\\'").replaceAll('\n','\\n').replaceAll('\r','\\r')}'` : `'${s.replaceAll("'", "'\\''")}'`;
+/** UX1: the command that answers one open question of a node (the full text of the question is elsewhere). */
+export const answerQuestion = (node: string, rid: string, qid: string, rev: number): string => `owed answer ${shell(node)} --rid ${shell(rid)} --qid ${shell(qid)} --rev ${rev} -- "<text>"`;
 export const answerRetry = (node: string, entry: RuleEntry, ref?: import('./types.ts').AnswerRef): string => {
   const a = ref ?? entry.answers?.find(a => a.node === node) ?? entry.answer!;
   // The prefix's exact length avoids treating punctuation in a qid as answer text.
