@@ -2,7 +2,13 @@
 
 Read before upgrading, running mixed readers or enabling new fields. Return to the [core](../SKILL.md) for the loop and hard rules. [SPEC compatibility](../../../docs/SPEC.md#compatibility-020027) gives the complete public contract.
 
-## Current release: 0.32.0
+## Current release: 0.33.0
+
+Plans and ledgers from 0.32.0 replay unchanged. New optional ledger kinds `stage`, `accept`, `reject` and `overturn`, an optional `via` field on entries recorded by a fork's A act, and an optional plan mapping `drive.delegate` are added; no existing kind, field or enum changes. A plan without `drive.delegate` behaves as in 0.32.0. Older readers refuse a plan with `drive.delegate` (unknown drive key) and do not know the new kinds: upgrade every reader before recording either. Per-version snapshots rebuild on first use. Restart upgraded drivers and pi sessions.
+
+Delegate forks need pi-durable-subagents >= 1.3.0 (`run --origin-session`, feature-detected once per binary); with an older dsa every wake is delivered as in 0.32.0. The driver's dsa read timeout default changes from 2000 ms (attest status poll) to 15000 ms; set `OWED_DSA_SHORT_MS` to override it. The outputs of `owed_plan`, `owed_edit` and `owed_amend` gain a final `recorded plan #<seq> ...` line, and `owed plan` refuses when the plan file changed between read and record. Other dsa requirements are unchanged.
+
+## 0.32.0
 
 Plans and ledger formats are unchanged from 0.31.2; no new ledger kind, field, enum or plan key is added. Per-version snapshots rebuild on first use of 0.32.0. Restart upgraded drivers and pi sessions.
 

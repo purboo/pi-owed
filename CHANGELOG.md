@@ -1,5 +1,81 @@
 # Changelog
 
+## 0.33.0
+
+Plans and ledgers from 0.32.0 replay unchanged. New, optional ledger kinds
+`stage`, `accept`, `reject` and `overturn`, an optional `via` field on entries
+recorded by a fork's A act, and an optional plan mapping `drive.delegate` are
+added; no existing kind, field or enum changes, and a plan without
+`drive.delegate` behaves as in 0.32.0. Readers older than 0.33.0 refuse a plan
+that sets `drive.delegate`, so upgrade every reader before recording one, and
+before anyone records a stage. Per-version snapshots rebuild on first use.
+Restart upgraded drivers and pi sessions to use the new runtime behavior.
+Delegate forks need pi-durable-subagents >= 1.3.0 (`run --origin-session`,
+feature-detected once per binary); with an older dsa every wake is delivered as
+in 0.32.0. Net source growth since 0.32.0 (`ba0e896`): 15 files under `src/`,
+1677 insertions and 122 deletions (+1555 lines).
+
+- **Transient dsa reads never halt (HT).** Read-only dsa calls (describe,
+  status, leases, the `--help` feature probe) made by the driver are retried
+  up to three more times after 1 s, 3 s and 9 s when they time out or end by a
+  signal. A read that still fails logs one driver line
+  `dsa read unavailable: <call>: <reason>` and is decided again on a later
+  pass; only a read failing continuously for 10 minutes halts the node with
+  `dsa reads failing for 10 min: <call>: <last error>`. The read timeout is
+  15000 ms (was 2000 ms for the attest status poll), overridable with
+  `OWED_DSA_SHORT_MS` (integer 1000-120000; other values are ignored with one
+  warning line). Write calls keep their timeouts. An attest error whose
+  measurements are already in the ledger continues from them and logs
+  `attest result taken from ledger #<seqs>` instead of halting. Before a halt or
+  repair caused by a writer call, the driver checks the call's generation: a
+  newer running or queued generation suppresses both
+  (`waiting: <call> generation <n> is running`), and an older halt is shown in
+  status and `owed why` as `stale halt: generation <n> is running (<call>)`.
+- **Stages and acceptance (SG).** `owed stage <node> --file BUNDLE.json`
+  (tool `owed_stage`) records a validated decision bundle: ruling text,
+  optional decide parameters, optional plan patch with before/after sha256,
+  optional appends and evidence, `read_through_seq`, touches, class A/B/C and
+  a summary. Anyone may stage, including subagent calls. `owed accept S<n>
+  [--amend TEXT]` (tool `owed_accept`, parent or owner) re-checks the stage,
+  refuses a stale one (`stage S<n> is stale: … — fork again`) or one that
+  overlaps an older open stage, then applies the plan patch, the decision
+  (ruling suffixed ` [stage S<n>]`), the `accept` entry and the appends in one
+  step; a retry after a crash is safe. `owed accept --all-b` accepts the open
+  class-B stages in order and stops at the first refusal. `owed reject`,
+  `owed stages [--all] [--json]` and `owed overturn` complete the set; status
+  adds `Stages: <n> open (<k> stale) → owed stages` and `owed why` lists a
+  node's open stages.
+- **Fork principal and A acts.** A dsa call labelled `owed_fork=<node>` is a
+  fork of that node. It may stage for any node and, only when the plan's
+  `drive.delegate.a_acts` enables them, perform two acts on its own node:
+  `preferred-answer` and `infra-resume`. They are recorded as the owner act
+  they are with `via: "fork:<call>"`. Every other parent or owner act stays
+  refused, with a message naming `owed stage`. `owed overturn <seq> --note`
+  disables that A act kind until a later plan lists it again.
+- **Wakes go to exact forks (DL).** When the plan's `drive.delegate.on` lists
+  a wake's kind (`question`, `writer-stop`, `review-asks`, `infra-halt`,
+  `needs-owner`), the pi session that follows the driver launches one exact
+  fork of itself for the node (`dsa run --origin-session`, agent `delegate`,
+  `context: "exact"`) instead of taking the wake as a turn. At most `max` forks
+  run at once and later wakes queue in order. The fork stages and stops; one
+  batched `owed delegate:` message per settle lists each stage with its
+  `owed accept S<n>` command, or the original wake text when a fork ended
+  without a stage. A node has at most one fork, and is not forked again while
+  a stage made by its fork is open (not accepted and not rejected); such a
+  wake is delivered as a normal turn. Wakes are never lost: a launch refusal
+  delivers the original wake at once, and forks pending at session quit are
+  delivered as their original wakes on the next follow.
+- **Full questions, retried refusals, recorded plan hash (UX).**
+  `owed question <node> [qid] [--json]` prints a node's open writer questions
+  unclipped; wakes and `owed why` lines that clip a question point to it. The
+  recording pi tools (decide, answer, resume, plan, edit, amend, rule, stage,
+  accept) retry once after an optimistic-concurrency refusal and say
+  `retried once after: <first refusal>`. `owed_plan`, `owed_edit` and
+  `owed_amend` end with `recorded plan #<seq> blob <sha> file sha256 <sha>`;
+  `owed plan` now refuses (`plan file changed; retry`) when the plan file
+  changed between the read and the ledger lock, so an older plan version is no
+  longer recorded.
+
 ## 0.32.0
 
 Plans and ledger formats are unchanged from 0.31.2; no new ledger kind,
