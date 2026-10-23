@@ -33,6 +33,8 @@ interface Harness {
   launches_ok: boolean;
   /** The forks whose launch is refused (the rest are launched). */
   refused: Set<string>;
+  /** The stage ids that are closed (accepted or rejected): a closed stage is no longer open. */
+  closed: Set<string>;
   /** The number of store writes (a store that is never written is never created). */
   saves: number;
   /** A new delegate over the same state: a session that follows the driver again. */
@@ -51,7 +53,7 @@ function harness(o: { plan?: DelegatePlan; session?: string } = {}): Harness {
   const pending: { wake: DelegateWake; id: string }[] = [];
   const refused = new Set<string>();
   const h: Harness = {
-    delegate: undefined as unknown as Delegate, launches, delivered, staged, state, plan: o.plan, session: o.session ?? 'pi-session-1', pending, launches_ok: true, refused, saves: 0,
+    delegate: undefined as unknown as Delegate, launches, delivered, staged, state, plan: o.plan, session: o.session ?? 'pi-session-1', pending, launches_ok: true, refused, closed: new Set<string>(), saves: 0,
     restart: () => new Delegate(ports()),
   };
   const ports = (): DelegatePorts => ({
@@ -66,7 +68,19 @@ function harness(o: { plan?: DelegatePlan; session?: string } = {}): Harness {
       return { ok: true, id: l.id, wid: widOf(l.wake.node) };
     },
     inspect: async (id: string) => state.get(id) ?? { state: 'absent' },
-    stages: async () => [...staged.values()].map(s => ({ ...s, by: s.by ?? authorOf(s.node) })),
+    stages: async () => [...staged.values()].filter(s => !h.closed.has(s.id)).map(s => ({ ...s, by: s.by ?? authorOf(s.node) })),
+    // DL6 (DL2 attribution): a stage belongs to a node's fork when its author's wid is the wid of a fork of that node.
+    forkStageNodes: async () => {
+      const forks = new Map(launches.map(l => [widOf(l.wake.node), l.wake.node] as const));
+      const nodes = new Set<string>();
+      for (const s of staged.values()) {
+        if (h.closed.has(s.id)) continue;
+        const by = s.by ?? authorOf(s.node);
+        const fork = by.startsWith('writer:') ? forks.get(by.slice('writer:'.length).split('@')[0]!) : undefined;
+        if (fork) nodes.add(fork);
+      }
+      return [...nodes];
+    },
     deliver: (text: string) => { delivered.push(text); },
     store: {
       load: async () => pending.map(p => ({ wake: p.wake, id: p.id })),
@@ -105,16 +119,60 @@ test('DL1: the fork task is a packet with the node, the wake, the seq, the plan 
   }
 });
 
-test('DL1: one fork per node, later wakes queue in order', async () => {
+test('DL6.4c: a second wake of a node whose fork is running is delivered, not queued', async () => {
   const h = harness({ plan: { on: ['question'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
   await h.delegate.take([wake('a'), wake('b')]);
   assert.equal(h.launches.length, 2);
-  await h.delegate.take([wake('a', 'question', 'Needs you: a — decide the second question')]);
-  assert.equal(h.launches.length, 2, 'a second wake for a running node is queued, not forked');
+  const second = wake('a', 'question', 'Needs you: a — decide the second question');
+  const rest = await h.delegate.take([second]);
+  assert.deepEqual(rest.map(w => w.id), [second.id], 'the second wake of the running node is delivered as a turn');
+  assert.equal(h.launches.length, 2, 'the running node is not forked again');
   h.state.set(h.launches[0]!.id, { state: 'sealed', status: 'ok' });
   await h.delegate.poll();
-  assert.equal(h.launches.length, 3, 'the queued wake is forked when the slot frees');
-  assert.equal(h.launches[2]!.wake.node, 'a');
+  assert.equal(h.launches.length, 2, 'the delivered wake was not queued: no fork when the slot frees');
+  assert.ok(!h.delivered.some(t => t.includes('decide the second question')), 'it is not delivered again as a refused wake');
+});
+
+test('DL6.4a: two differently worded wakes of one node while its fork stage is open fork once', async () => {
+  const h = harness({ plan: { on: ['needs-owner'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
+  const first = wake('greet', 'needs-owner', 'Needs you: greet — resolve the owner review (facts 3)');
+  assert.deepEqual(await h.delegate.take([first]), []);
+  h.staged.set(h.launches[0]!.id, { id: 'S4', node: 'greet', class: 'B', summary: 'Resolve the review', evidence: 0, seq: 20 });
+  h.state.set(h.launches[0]!.id, { state: 'sealed', status: 'ok' });
+  await h.delegate.poll();
+  const second = wake('greet', 'needs-owner', 'Needs you: greet — resolve the owner review (facts 4)');
+  const rest = await h.delegate.take([second]);
+  assert.equal(h.launches.length, 1, 'one launch: the open stage of its fork blocks a new fork');
+  assert.deepEqual(rest.map(w => w.id), [second.id], 'the second wake is delivered as a turn');
+  const again = await h.delegate.take([wake('greet', 'needs-owner', 'Needs you: greet — resolve the owner review (facts 5)')]);
+  assert.equal(again.length, 1, 'a third wording is delivered too');
+  assert.equal(h.launches.length, 1);
+});
+
+test('DL6.4b: after the fork stage is accepted, a new wake forks again', async () => {
+  const h = harness({ plan: { on: ['needs-owner'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
+  await h.delegate.take([wake('greet', 'needs-owner', 'Needs you: greet — one')]);
+  h.staged.set(h.launches[0]!.id, { id: 'S4', node: 'greet', class: 'B', summary: 'Resolve', evidence: 0, seq: 20 });
+  h.state.set(h.launches[0]!.id, { state: 'sealed', status: 'ok' });
+  await h.delegate.poll();
+  assert.equal((await h.delegate.take([wake('greet', 'needs-owner', 'Needs you: greet — two')])).length, 1, 'blocked while S4 is open');
+  h.closed.add('S4');
+  const rest = await h.delegate.take([wake('greet', 'needs-owner', 'Needs you: greet — three')]);
+  assert.deepEqual(rest, [], 'the closed stage no longer blocks');
+  assert.equal(h.launches.length, 2, 'a new fork is launched');
+});
+
+test('DL6.2: an open stage by another actor or by another node fork does not block the node', async () => {
+  const h = harness({ plan: { on: ['question'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
+  await h.delegate.take([wake('b')]);
+  h.staged.set('parent', { id: 'S1', node: 'a', class: 'B', summary: 'The parent staged', evidence: 0, by: 'owner:pi' });
+  h.staged.set('other-fork', { id: 'S2', node: 'a', class: 'B', summary: 'The fork of b staged for a', evidence: 0, by: authorOf('b') });
+  const rest = await h.delegate.take([wake('a')]);
+  assert.deepEqual(rest, [], 'node a is forked');
+  assert.equal(h.launches.length, 2);
+  h.state.set(h.launches[0]!.id, { state: 'sealed', status: 'ok' });
+  await h.delegate.poll();
+  assert.equal((await h.delegate.take([wake('b', 'question', 'Needs you: b — again')])).length, 1, 'the stage made by the fork of b blocks b');
 });
 
 test('DL1: at most max forks run at once', async () => {
@@ -244,6 +302,7 @@ test('DL3: the next session hands the pending wakes back and does not fork them 
     launch: async (l) => { h.launches.push(l); return { ok: true, id: l.id }; },
     inspect: async (id) => h.state.get(id) ?? { state: 'absent' },
     stages: async () => [],
+    forkStageNodes: async () => [],
     deliver: (text) => { h.delivered.push(text); },
     store: { load: async () => h.pending.map(p => ({ wake: p.wake, id: p.id })), save: async (list) => { h.pending.length = 0; h.pending.push(...list); } },
   });
@@ -282,6 +341,7 @@ test('DL4: an older dsa without --origin-session delivers the wake as a turn', a
       },
       inspect: async () => ({ state: 'absent' }),
       stages: async () => [],
+      forkStageNodes: async () => [],
       deliver: (t) => { h.delivered.push(t); },
       store: { load: async () => [], save: async () => {} },
     });

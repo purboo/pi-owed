@@ -95,14 +95,20 @@ export interface DelegatePorts {
   inspect: (id: string) => Promise<DelegateForkState>;
   /** The open stages of the repository (the fork's own stage is the one recorded after its launch). */
   stages: () => Promise<DelegateStage[]>;
+  /**
+   * DL6: the nodes that have an open stage (not accepted, not rejected) made by one of their forks: the stage author is
+   * the fork's call (DL2 attribution), and the fork's run carries the label `owed_fork=<node>`. Read at wake time.
+   */
+  forkStageNodes: () => Promise<string[]>;
   /** Deliver a message to the session. */
   deliver: (text: string) => void;
   /** The pending forks of a previous session, kept across a session quit. */
   store: { load: () => Promise<{ wake: DelegateWake; id: string }[]>; save: (list: { wake: DelegateWake; id: string }[]) => Promise<void> };
 }
 /**
- * DL1-DL4: the delegate of one repository. It takes the node wakes its plan lists, launches one exact fork per node
- * (at most `max` at once, later wakes queue in order), and reports every settled fork as one batched message.
+ * DL1-DL4, DL6: the delegate of one repository. It takes the node wakes its plan lists, launches one exact fork per node
+ * (at most `max` at once, wakes of other nodes queue in order; a node with a running fork or an open fork stage is not
+ * forked again and its wake stays in the turn), and reports every settled fork as one batched message.
  */
 export class Delegate {
   private readonly running = new Map<string, { wake: DelegateWake; id: string; seq: number; wid?: string }>();
@@ -122,13 +128,18 @@ export class Delegate {
    */
   async take(wakes: DelegateWake[]): Promise<DelegateWake[]> {
     const left: DelegateWake[] = [];
+    let staged: Set<string> | undefined;
     for (const wake of wakes) {
       const plan = await this.plan_();
       if (!plan || !plan.on.includes(wake.kind) || !await this.exact_() || !this.ports.session()) { left.push(wake); continue; }
       // DL3: this wake is answered by a fork already (this session or the store of an earlier one); it is not repeated.
       if (this.handled.has(wake.id) || (await this.stored_()).has(wake.id)) continue;
+      // DL6: a node with a running fork or an open stage of one of its forks is not forked (and not queued): the wake
+      // stays in the turn exactly like a kind the plan does not delegate. It is not a refusal and is not marked handled.
+      staged ??= await this.forkStageNodes_();
+      if (this.running.has(wake.node) || staged.has(wake.node)) { left.push(wake); continue; }
       this.handled.add(wake.id);
-      if (this.running.has(wake.node) || this.running.size >= plan.max) { this.queue.push({ wake }); continue; }
+      if (this.running.size >= plan.max) { this.queue.push({ wake }); continue; }
       if (!await this.launch(wake, plan)) { this.handled.delete(wake.id); left.push(wake); }
     }
     return left;
@@ -186,6 +197,10 @@ export class Delegate {
   private async plan_(): Promise<DelegatePlan | undefined> {
     return (await this.ports.facts().catch(() => undefined)) ?? undefined;
   }
+  /** DL6: the nodes blocked by an open stage of one of their forks; an unreadable ledger blocks nothing. */
+  private async forkStageNodes_(): Promise<Set<string>> {
+    return new Set(await this.ports.forkStageNodes().catch(() => [] as string[]));
+  }
   private async exact_(): Promise<boolean> {
     if (this.exact === undefined) this.exact = await this.ports.supported().catch(() => false);
     return this.exact;
@@ -210,10 +225,13 @@ export class Delegate {
   private async startQueued(): Promise<void> {
     const plan = await this.plan_();
     if (!plan) return;
+    let staged: Set<string> | undefined;
     for (const item of [...this.queue]) {
       if (this.running.size >= plan.max) return;
-      if (this.running.has(item.wake.node)) continue;
       this.queue.splice(this.queue.indexOf(item), 1);
+      // DL6: the node got a fork or an open fork stage after this wake queued: deliver the wake instead of forking it.
+      staged ??= await this.forkStageNodes_();
+      if (this.running.has(item.wake.node) || staged.has(item.wake.node)) { this.handled.delete(item.wake.id); this.ports.deliver(item.wake.text); continue; }
       // DL3: a refused launch delivers the original wake at once; the wake is never lost.
       if (!await this.launch(item.wake, plan)) { this.handled.delete(item.wake.id); this.ports.deliver(item.wake.text); }
     }
