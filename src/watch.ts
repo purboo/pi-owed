@@ -152,13 +152,22 @@ export class Delegate {
   /**
    * DL3: the session quits. The pending forks are kept (so the next session hands their wakes back) and their wakes
    * are returned: a wake that no fork will answer is never lost.
+   *
+   * Nothing is written when there is nothing to keep: a repo whose plan does not delegate never gets a store file
+   * (and never gets the store directory), so a quit does not touch the file system of a repo it does not delegate in.
    */
   async quit(): Promise<DelegateWake[]> {
     const pending = [...[...this.running.values()].map(f => ({ wake: f.wake, id: f.id })), ...this.queue.map(q => ({ wake: q.wake, id: '' }))];
-    await this.ports.store.save(pending);
+    if (pending.length) {
+      await this.ports.store.save(pending);
+      this.stored = new Set(pending.map(p => p.wake.id));
+    } else {
+      // A store that still holds entries is cleared; an empty store is left alone (nothing is written).
+      const stored = await this.stored_();
+      if (stored.size) { await this.ports.store.save([]); this.stored = new Set(); }
+    }
     this.running.clear();
     this.queue.length = 0;
-    this.stored = new Set(pending.map(p => p.wake.id));
     return pending.map(p => p.wake);
   }
 
