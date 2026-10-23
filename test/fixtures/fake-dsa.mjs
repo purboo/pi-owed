@@ -195,7 +195,7 @@ function runCmd(args) {
   emit(s, run, 'submitted', {});
   const executed = execute(s, run, 'run');
   save(s);
-  log({ cmd: 'run', request: id, exit: f ? f.exit : 0, created: true, executed, ...(f ? { fault: f.mode } : {}), ...session, ...(values['origin-session'] ? { originSession: values['origin-session'] } : {}) });
+  log({ cmd: 'run', request: id, exit: f ? f.exit : 0, created: true, executed, ...(f ? { fault: f.mode } : {}), ...(Object.keys(labels).length ? { labels } : {}), ...session, ...(values['origin-session'] ? { originSession: values['origin-session'] } : {}) });
   if (f) return f.exit === 75 ? new Exit(75, { request: id, pending: true, reason: `fault: ${f.mode}` }) : new Exit(f.exit, { request: id, applied: false, reason: 'fault' });
   return new Exit(0, req.reply);
 }

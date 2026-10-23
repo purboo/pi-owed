@@ -175,7 +175,7 @@ async function delegateStages(repo: string): Promise<DelegateStage[]> {
         const bundle = JSON.parse((await ledger.getBlob(e.bundle)).toString()) as { evidence?: unknown[] };
         evidence = Array.isArray(bundle.evidence) ? bundle.evidence.length : 0;
       } catch { /* an unreadable bundle has no evidence count */ }
-      out.push({ id: stageId(e.seq), node: e.node, class: e.class, summary: e.summary, evidence, seq: e.seq });
+      out.push({ id: stageId(e.seq), node: e.node, class: e.class, summary: e.summary, evidence, seq: e.seq, by: e.by });
     }
     return out;
   } catch { return []; }
@@ -262,8 +262,9 @@ export default function owed(pi: ExtensionAPI): void {
     launch: async (l) => {
       const client = delegateClient(repo, agent.session);
       if (!client) return { ok: false, reason: 'no pi session for the exact fork' };
+      // The run is owned by the session that follows the driver (`--session`) and pins its capture (`--origin-session`).
       const r = await client.run(l.id, JSON.stringify(l.spec), l.labels, repo, agent.session);
-      if (r.outcome === 'applied') return { ok: true, id: l.id };
+      if (r.outcome === 'applied') return { ok: true, id: l.id, wid: r.wid };
       return { ok: false, reason: r.outcome === 'pending' ? 'dsa is pending' : r.outcome === 'conflict' ? 'dsa request-conflict' : `dsa refused: ${r.reason ?? 'rejected'}` };
     },
     inspect: async (id) => {
@@ -317,21 +318,27 @@ export default function owed(pi: ExtensionAPI): void {
       if (!delegates.has(repo)) continue;
     }
   };
-  /** DL3: the session follows the driver again: the wakes a previous session left pending are handed back. */
-  const restoreDelegates = async () => {
-    for (const r of registeredDrivers()) {
-      if (r.session !== agent.session) continue;
-      const d = delegateFor(r.repo);
+  /**
+   * DL3: the session follows the driver again: the wakes a previous session left pending are handed back, before
+   * the follower replays the driver log (a replayed wake must not be forked a second time).
+   */
+  const restoreDelegates = async (dirs: string[] = []) => {
+    const repos = new Set<string>();
+    for (const dir of dirs) repos.add(await git.mainRoot(dir).catch(() => dir));
+    for (const r of registeredDrivers()) if (r.session === agent.session) repos.add(r.repo);
+    for (const repo of repos) {
+      const d = delegateFor(repo);
       try { await d.restore(); } catch { /* the wake stays in the driver log and is read again */ }
     }
   };
   if (typeof pi.on === 'function') {
     // Internal worker tick: the timer lives in pi, all log/git/replay work lives here.
-    (pi.on as (name: string, handler: (_event: unknown, ctx: ExtensionContext) => Promise<unknown>) => unknown)('owed_tick', async (_event, ctx) => { useContext(ctx); await attachSessionDrivers(); await watch.flush(); await idleWatch.flush(); await pollDelegates(); });
+    (pi.on as (name: string, handler: (_event: unknown, ctx: ExtensionContext) => Promise<unknown>) => unknown)('owed_tick', async (_event, ctx) => { useContext(ctx); await restoreDelegates([ctx.cwd]); await attachSessionDrivers(); await watch.flush(); await idleWatch.flush(); await pollDelegates(); });
     pi.on('agent_start', (_event, ctx) => { useContext(ctx); agent.running = true; });
     pi.on('agent_settled', async (_event, ctx) => { useContext(ctx); agent.running = false; await watch.flush(); await idleWatch.flush(); await pollDelegates(); });
     // SN: cwd and tool use are not subscriptions; only the driver's owning top-level session follows.
-    pi.on('session_start', async (_event, ctx) => { useContext(ctx); await attachDriver(ctx.cwd); await attachSessionDrivers(); await restoreDelegates(); });
+    // DL3: the store is restored before the follower attaches, so a replayed wake line is not forked a second time.
+    pi.on('session_start', async (_event, ctx) => { useContext(ctx); await restoreDelegates([ctx.cwd]); await attachDriver(ctx.cwd); await attachSessionDrivers(); });
     pi.on('session_shutdown', () => { watch.stopAll(); idleWatch.stopAll(); for (const c of genesisRuns) c.abort(); void quitDelegates(); });
   }
   const core = new Set(['status', 'why', 'decide', 'drive', 'start', 'submit', 'review']);

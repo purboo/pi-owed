@@ -1,12 +1,18 @@
 // DL1-DL5: the session's delegate routes node wakes to exact forks of the session and reports the settle.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Delegate, type DelegateKind, type DelegatePlan, type DelegateStage, type DelegateWake } from '../src/watch.ts';
+import type { ExtensionAPI, ToolDefinition } from '@earendil-works/pi-coding-agent';
+import { Delegate, type DelegateKind, type DelegatePlan, type DelegatePorts, type DelegateStage, type DelegateWake } from '../src/watch.ts';
+import { delegateWakeId } from '../src/drive-bg.ts';
 import { forkPrincipal } from '../src/stage.ts';
+import { procStart } from '../src/drive-run.ts';
+import * as ops from '../src/ops.ts';
+import owedExtension from '../src/extension.ts';
+import { repo } from './helpers/repo.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-dsa.mjs', import.meta.url));
 
@@ -24,35 +30,47 @@ interface Harness {
   session: string | undefined;
   pending: { wake: DelegateWake; id: string }[];
   launches_ok: boolean;
+  /** The forks whose launch is refused (the rest are launched). */
+  refused: Set<string>;
+  /** A new delegate over the same state: a session that follows the driver again. */
+  restart: () => Delegate;
 }
+
+/** The run wid of a fork of a node (the harness gives every node its own run). */
+const widOf = (node: string) => `wid-${node}`;
+/** The author of a stage made inside the fork's dsa call: `writer:<call address>`. */
+const authorOf = (node: string) => `writer:${widOf(node)}@1/tasks:0@1`;
 
 function harness(o: { plan?: DelegatePlan; session?: string } = {}): Harness {
   const launches: Launch[] = [], delivered: string[] = [];
   const staged = new Map<string, DelegateStage>();
   const state = new Map<string, { state: string; status?: string; error?: string; exact?: { mode: string; reason?: string; firstCacheRatio?: number; costUsd?: number } }>();
   const pending: { wake: DelegateWake; id: string }[] = [];
+  const refused = new Set<string>();
   const h: Harness = {
-    delegate: undefined as unknown as Delegate, launches, delivered, staged, state, plan: o.plan, session: o.session ?? 'pi-session-1', pending, launches_ok: true,
+    delegate: undefined as unknown as Delegate, launches, delivered, staged, state, plan: o.plan, session: o.session ?? 'pi-session-1', pending, launches_ok: true, refused,
+    restart: () => new Delegate(ports()),
   };
-  h.delegate = new Delegate({
+  const ports = (): DelegatePorts => ({
     facts: async () => h.plan,
     session: () => h.session,
     supported: async () => true,
-    launch: async (l) => {
+    launch: async (l: { wake: DelegateWake; id: string; labels: Record<string, string>; spec: Record<string, unknown> }) => {
       launches.push(l);
-      if (!h.launches_ok) return { ok: false, reason: 'request-conflict' };
+      if (!h.launches_ok || refused.has(l.wake.node)) return { ok: false, reason: 'request-conflict' };
       state.set(l.id, { state: 'running' });
       pending.push({ wake: l.wake, id: l.id });
-      return { ok: true, id: l.id };
+      return { ok: true, id: l.id, wid: widOf(l.wake.node) };
     },
-    inspect: async (id) => state.get(id) ?? { state: 'absent' },
-    stages: async () => [...staged.values()],
-    deliver: (text) => { delivered.push(text); },
+    inspect: async (id: string) => state.get(id) ?? { state: 'absent' },
+    stages: async () => [...staged.values()].map(s => ({ ...s, by: s.by ?? authorOf(s.node) })),
+    deliver: (text: string) => { delivered.push(text); },
     store: {
       load: async () => pending.map(p => ({ wake: p.wake, id: p.id })),
-      save: async (list) => { pending.length = 0; pending.push(...list); },
+      save: async (list: { wake: DelegateWake; id: string }[]) => { pending.length = 0; pending.push(...list); },
     },
   });
+  h.delegate = new Delegate(ports());
   return h;
 }
 
@@ -292,4 +310,120 @@ test('DL: a fork call is described through its call address, not through describ
       if (priorDir === undefined) delete process.env.FAKE_DSA_DIR; else process.env.FAKE_DSA_DIR = priorDir;
     }
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('DL3: a restart does not fork a pending wake again when its line is replayed', async () => {
+  const h = harness({ plan: { on: ['question'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
+  const w = wake('a');
+  await h.delegate.take([w]);
+  assert.equal(h.launches.length, 1, 'the first session forked the wake');
+  await h.delegate.quit();
+  assert.equal(h.pending.length, 1, 'the fork is pending in the store');
+  // The session follows the driver again: the same wake line is replayed from the driver log.
+  const next = h.restart();
+  await next.restore();
+  const launches = h.launches.length;
+  const rest = await next.take([w]);
+  assert.equal(h.launches.length, launches, 'the replayed wake is not forked a second time');
+  assert.equal(rest.length, 0, 'the replayed wake is not delivered as a turn either');
+});
+
+test('DL3: a restart without a restore still does not fork a pending wake again', async () => {
+  const h = harness({ plan: { on: ['question'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
+  const w = wake('a');
+  await h.delegate.take([w]);
+  await h.delegate.quit();
+  // The replayed line reaches the delegate before the store was restored (the registry was not ready yet).
+  const next = h.restart();
+  const launches = h.launches.length;
+  const rest = await next.take([w]);
+  assert.equal(h.launches.length, launches, 'a wake pending in the store is never forked again');
+  assert.equal(rest.length, 0, 'the wake stays with the pending fork');
+});
+
+test('DL3: a refused queued launch delivers the original wake at once', async () => {
+  const h = harness({ plan: { on: ['question'], max: 1, aActs: [], seq: 12, planSha: 'abc123' } });
+  await h.delegate.take([wake('a')]);
+  assert.equal(h.launches.length, 1, 'the first node holds the only slot');
+  const queued = wake('b');
+  await h.delegate.take([queued]);
+  assert.equal(h.launches.length, 1, 'the second node queues');
+  h.refused.add('b');
+  h.state.set(h.launches[0]!.id, { state: 'sealed', status: 'ok' });
+  await h.delegate.poll();
+  assert.equal(h.launches.length, 2, 'the queued wake is launched when the slot frees');
+  const delivered = h.delivered.join('\n');
+  assert.match(delivered, /Needs you: b/, 'the refused queued launch delivers the original wake at once');
+});
+
+test('DL2: a stage of the same node by another actor is not the fork stage', async () => {
+  const h = harness({ plan: { on: ['question'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
+  await h.delegate.take([wake('a')]);
+  h.staged.set(h.launches[0]!.id, { id: 'S9', node: 'a', class: 'B', summary: 'The parent staged this', evidence: 1, by: 'owner:pi' });
+  h.state.set(h.launches[0]!.id, { state: 'sealed', status: 'ok' });
+  await h.delegate.poll();
+  assert.doesNotMatch(h.delivered[0]!, /S9/, 'the stage of another actor is not attributed to the fork');
+  assert.match(h.delivered[0]!, /ended with no stage/, 'the fork reports that it staged nothing');
+});
+
+test('DL2: the fork stage is the one the fork call made, not an earlier stage of the same node', async () => {
+  const h = harness({ plan: { on: ['question'], max: 4, aActs: [], seq: 12, planSha: 'abc123' } });
+  await h.delegate.take([wake('a')]);
+  h.staged.set('parent-stage', { id: 'S1', node: 'a', class: 'C', summary: 'The parent staged this', evidence: 1, by: 'owner:pi' });
+  h.staged.set('fork-stage', { id: 'S2', node: 'a', class: 'B', summary: 'The fork staged this', evidence: 2, by: authorOf('a') });
+  h.state.set(h.launches[0]!.id, { state: 'sealed', status: 'ok' });
+  await h.delegate.poll();
+  assert.match(h.delivered[0]!, /S2/, "the fork's own stage is reported");
+  assert.doesNotMatch(h.delivered[0]!, /S1/, "the stage of another actor is not reported and does not hide the fork's stage");
+});
+
+test('DL3: the session restores the store before it follows the driver, so a replayed wake is not forked again', async () => {
+  const r = await repo();
+  const dir = join(r.root, 'dsa');
+  await mkdir(dir, { recursive: true });
+  const plan = { version: 1, trunk: 'main', closure: [], invariants: [], drive: { delegate: { on: ['question'] } }, nodes: [{ id: 'a', writes: ['a.txt'], checks: [] }] };
+  await r.put('plan.json', JSON.stringify(plan));
+  await r.commit();
+  await ops.init({ cwd: r.cwd, as: { role: 'owner', id: 'human' }, channel: 'flag', plan: JSON.stringify(plan) });
+  const ledgerDir = process.env.OWED_DIR!;
+  const driveDir = join(ledgerDir, 'drive');
+  await mkdir(driveDir, { recursive: true });
+  // The driver log holds the node wake; the follower replays it when it attaches.
+  const line = JSON.stringify({ do: 'notify', node: 'a', outcome: 'notify', text: "a: writer run r1 asks (qid q1-1, rev 1): which db?", facts: 3 });
+  await writeFile(join(driveDir, 'log.jsonl'), `${line}\n`, 'utf8');
+  // A live driver of this session: the lock names this process and the session.
+  await writeFile(join(ledgerDir, 'drive.lock'), JSON.stringify({ pid: process.pid, start: procStart(process.pid), host: hostname(), at: new Date().toISOString(), token: 'test-token', session: 'delegate-session' }), 'utf8');
+  // The store of the previous session holds the pending fork of that very wake.
+  const wakeId = delegateWakeId('a', 'question', "a: writer run r1 asks (qid q1-1, rev 1): which db?", 3);
+  const wakeText = "Needs you: a — writer run r1 asks (qid q1-1, rev 1): which db? → owed answer a q1-1";
+  await writeFile(join(driveDir, 'delegate.json'), JSON.stringify([{ wake: { node: 'a', kind: 'question', text: wakeText, id: wakeId }, id: 'delegate:a:old' }]), 'utf8');
+  const prior = { OWED_DSA: process.env.OWED_DSA, FAKE_DSA_DIR: process.env.FAKE_DSA_DIR, XDG_STATE_HOME: process.env.XDG_STATE_HOME };
+  process.env.OWED_DSA = FAKE;
+  process.env.FAKE_DSA_DIR = dir;
+  process.env.XDG_STATE_HOME = join(r.root, 'state');
+  const tools = new Map<string, ToolDefinition>();
+  const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+  const messages: { customType: string; content: string }[] = [];
+  owedExtension({
+    registerTool(t: ToolDefinition) { tools.set(t.name, t); },
+    registerCommand() { /* unused */ },
+    on(event: string, h: (event: unknown, ctx: unknown) => unknown) { handlers.set(event, h); return () => undefined; },
+    sendMessage(message: { customType: string; content: string }) { messages.push(message); },
+  } as unknown as ExtensionAPI);
+  const ctx = { cwd: r.cwd, hasUI: false, isIdle: () => true, sessionManager: { getSessionId: () => 'delegate-session' }, ui: { notify() { /* unused */ } } };
+  try {
+    await handlers.get('session_start')?.({ type: 'session_start', reason: 'startup' }, ctx);
+    const dsaLog = await readFile(join(dir, 'log.jsonl'), 'utf8').catch(() => '');
+    const runs = dsaLog.split('\n').filter(Boolean).map(l => JSON.parse(l) as { cmd?: string; labels?: Record<string, string> });
+    const forked = runs.filter(x => x.cmd === 'run' && x.labels?.owed_fork === 'a');
+    assert.equal(forked.length, 0, 'the replayed wake is not forked again');
+    const state = JSON.parse(await readFile(join(dir, 'state.json'), 'utf8').catch(() => '{}')) as { runs?: Record<string, { labels?: Record<string, string> }> };
+    assert.equal(Object.values(state.runs ?? {}).filter(x => x.labels?.owed_fork === 'a').length, 0, 'no fork run was recorded for the node');
+    assert.ok(messages.some(m => m.content.includes('Needs you: a')), 'the pending wake is handed back to the session');
+  } finally {
+    if (prior.OWED_DSA === undefined) delete process.env.OWED_DSA; else process.env.OWED_DSA = prior.OWED_DSA;
+    if (prior.FAKE_DSA_DIR === undefined) delete process.env.FAKE_DSA_DIR; else process.env.FAKE_DSA_DIR = prior.FAKE_DSA_DIR;
+    if (prior.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = prior.XDG_STATE_HOME;
+    await r.cleanup();
+  }
 });

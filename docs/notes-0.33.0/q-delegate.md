@@ -61,7 +61,11 @@ change: the fork stages as a writer (`owed stage`), the parent accepts.
   sessions, so a wake is never forked twice. The fact mark is part of it: two
   facts of the same node are two wakes.
 * The fork is launched with the pi session id of the session that follows the
-  driver (`--origin-session`), so the fork sees this session's context.
+  driver, twice over: `--session <pi session id>` owns the run in that session
+  (so the parent session is woken and its run list shows the fork) and
+  `--origin-session <pi session id>` pins the fork's context to that session's
+  capture. Both are passed (parent ruling); only the origin session makes the
+  run exact.
 * The packet names the node, the wake text, the ledger head seq as
   `read_through_seq`, the plan sha256 and the enabled A acts (the plan's
   `a_acts` minus the kinds an `overturn` disabled), plus the five rules.
@@ -94,11 +98,18 @@ owed accept --all-b
 ## DL3 – wakes are never lost
 
 * A dsa launch refusal (rejected, conflict, no session) delivers the original
-  wake at once: the wake goes back into the turn, not into a fork.
+  wake at once: the wake goes back into the turn, not into a fork. A refused
+  **queued** launch does the same: the original wake text is delivered as its
+  own message, because its turn has already gone by.
 * On `session_shutdown` the pending forks (running and queued) are written to
   `<drive dir>/drive/delegate.json`. When the session follows the driver again,
   those wakes are delivered as their original wakes and are not forked a second
   time.
+* A restart never forks a pending wake twice: the store is restored **before**
+  the follower attaches (so the replayed log line finds the wake already
+  handled), and a wake id that is still pending in the persisted store is never
+  forked, even when the restore has not run yet (the driver registry was not
+  ready).
 
 ## DL4 – the 0.32.0 behavior
 
@@ -109,6 +120,27 @@ Nothing is delegated (and every wake is delivered exactly as in 0.32.0) when
 * the process runs inside a dsa call (`DSA_CALL`/`DSA_EXEC`),
 * the dsa binary does not accept `--origin-session` (probed once per binary
   with `--help`; an older dsa behaves like 0.32.0).
+
+## Parent rulings and review findings
+
+* **Ruling #4021**: a fork principal (a call address) is resolved through
+  `describe <wid> --json`; `describe --key` takes a request id and refuses a
+  call address.
+* **Ruling on `--session`**: the fork run keeps `--session <pi session id>`
+  next to `--origin-session <pi session id>`. Owning the run in the parent
+  session is intended: the parent session is woken and its run list shows the
+  fork. Only the origin session makes the run exact.
+* **Review #4028 (blocked)**: three findings were fixed, each with a test that
+  fails without its fix:
+  1. *A duplicate fork after a restart*: the store is restored before the
+     follower attaches, and a wake id that is pending in the persisted store
+     is never forked.
+  2. *A wake lost when a queued launch is refused*: the original wake text is
+     delivered at once, as a refused direct launch does.
+  3. *Stage attribution*: a stage belongs to a fork only when the fork's own
+     call made it (`writer:<call address>` of the fork's run); a same-node
+     stage by another actor stays unattributed and does not hide the fork's
+     stage.
 
 ## Interpretations (documented choices)
 
@@ -124,9 +156,12 @@ Nothing is delegated (and every wake is delivered exactly as in 0.32.0) when
 3. **Wake text.** The plain `Needs you: …` line the session would have read.
    The fork packet carries that text; the driver report's raw text only feeds
    the wake id.
-4. **Stage attribution.** A stage belongs to a fork when it is recorded for the
-   fork's node and after the ledger seq the fork read through. A stage of
-   another node or an earlier seq is not attributed to it.
+4. **Stage attribution.** A stage belongs to a fork only when the fork's own
+   call made it: the author of a stage recorded inside a dsa call is
+   `writer:<call address>`, and the call address starts with the run's wid.
+   A stage of the same node by another actor is not the fork's stage, and it
+   does not hide the fork's own stage. A stage recorded before the fork read
+   through its seq is not the fork's stage either.
 5. **Open stages.** "Open" means a stage entry without a later accept or
    reject. The class-B count for `owed accept --all-b` is over all open stages.
 6. **The delegate's state.** The pending forks live in
@@ -136,12 +171,13 @@ Nothing is delegated (and every wake is delivered exactly as in 0.32.0) when
 
 ## Tests
 
-`test/delegate0330.test.ts` (18 tests) covers DL1–DL5 with the fake dsa:
+`test/delegate0330.test.ts` (24 tests) covers DL1–DL5 with the fake dsa:
 launch arguments and labels, the packet, one fork per node, `max` and the
 queue, the batched delivery with stage/class/evidence/accept/exact facts, the
 `--all-b` line, a fork without a stage, a launch refusal, the quit and the
-restart recovery, the missing session id, the older dsa and the call-address
-description of ruling #4021.
+restart recovery (with and without a restore), the missing session id, the
+older dsa, the attribution of a stage to the fork's own call and the call
+address description of ruling #4021.
 
 Changed existing tests: `test/stage0330.test.ts` mocks `Dsa.describeCall`
 instead of `Dsa.describe` for the fork principal (ruling #4021 changes which
