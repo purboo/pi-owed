@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.33.1
+
+No behavior change. Removed local machine paths and private provider names from the docs, notes,
+formal run logs and test fixtures; examples now use `/work/...` and generic provider names. Plans and
+ledgers from 0.33.0 replay unchanged.
+
 ## 0.33.0
 
 Plans and ledgers from 0.32.0 replay unchanged. New, optional ledger kinds

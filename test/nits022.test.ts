@@ -155,7 +155,7 @@ test('NT replay: real repository 0.20 ledger prefix verifies and full/incrementa
   for(const e of f.entries.slice(1)) inc=R.reduceFrom(inc,[e],lookup);
   assert.equal(R.sameReplay(inc,full),true);
   assert.deepEqual({seq:full.seq,head:full.head,trunk:full.trunk.commit,merged:Object.values(full.nodes).filter(n=>n.merged).map(n=>n.id),ready:(await import('../src/views.ts')).statusView(full).ready},
-    {seq:12,head:'996a7269d4407bf11ab23bee9662fe05cf79426e68bdd013253aec323059d10d',trunk:'3f662bf0fba7ef26112761baeb85e2eee8527cbc',merged:['english'],ready:['brief','escape','gc','strength']});
+    {seq:12,head:'7bc18704699de17ffaa4be88eb5606bc1e0b6cf3e71b5bc8ea9c044e4a8ff9a2',trunk:'3f662bf0fba7ef26112761baeb85e2eee8527cbc',merged:['english'],ready:['brief','escape','gc','strength']});
 });
 
 test('NT mtrain #2270: batch fail cannot carry remeasure metadata or supply the single-merge first failure hint', {timeout:180_000}, async () => {

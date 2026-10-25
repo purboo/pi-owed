@@ -85,7 +85,7 @@
       "seq": 4,
       "ts": "2026-10-08T23:54:12.675Z",
       "prev": "5e7f386b3eda9bf384391fc8d8ca85df3c6dbbadb90bea20f85a0669a7e88ef5",
-      "hash": "3915512b8bff37c35c74c8d788eeb439b2190dd2445391e094e5ea81b2079c92"
+      "hash": "0a59f4656cf08eb4e694dc6354649fcdbc63b1df42afd8ffcecac7f6deea498a"
     },
     {
       "kind": "submit",
@@ -122,8 +122,8 @@
       },
       "seq": 5,
       "ts": "2026-10-09T00:00:21.798Z",
-      "prev": "3915512b8bff37c35c74c8d788eeb439b2190dd2445391e094e5ea81b2079c92",
-      "hash": "f37105a6cd185ee6db52a913ded24b507c02348d434e883ec8e3a2afa399e91b"
+      "prev": "0a59f4656cf08eb4e694dc6354649fcdbc63b1df42afd8ffcecac7f6deea498a",
+      "hash": "2c00b1e1fa43e93aa47d0b7160ee4ff7e50d8a287eb2ca1aa9b98ea07b358cbd"
     },
     {
       "kind": "obs",
@@ -146,8 +146,8 @@
       "log": "4d9d8c054a12a88c07e3a345eb16c6e98e13e0ead9a67d998d3008c41bd96e96",
       "seq": 6,
       "ts": "2026-10-09T00:00:49.859Z",
-      "prev": "f37105a6cd185ee6db52a913ded24b507c02348d434e883ec8e3a2afa399e91b",
-      "hash": "5b7298b4e539de920f40c4bd894b753f389ee921b97bed0ebb7ff990f0316750"
+      "prev": "2c00b1e1fa43e93aa47d0b7160ee4ff7e50d8a287eb2ca1aa9b98ea07b358cbd",
+      "hash": "9d13856b252d416b690e451ac3eb52cb896eb63957560312d262a4b2a9bc7718"
     },
     {
       "kind": "obs",
@@ -170,8 +170,8 @@
       "log": "946103134acd1fccf1a2b05067291a9bf4e2b1ea2c67501500f12228eb00452c",
       "seq": 7,
       "ts": "2026-10-09T00:00:50.503Z",
-      "prev": "5b7298b4e539de920f40c4bd894b753f389ee921b97bed0ebb7ff990f0316750",
-      "hash": "e3fe9efc38bd0036aa65258ccd68c18509686439ae445b063a0d3561c381880b"
+      "prev": "9d13856b252d416b690e451ac3eb52cb896eb63957560312d262a4b2a9bc7718",
+      "hash": "6c7a2c883d9debba1dba0ec1d0d72fe579ce8949f87bacb2dacd955ee399a174"
     },
     {
       "kind": "obs",
@@ -188,8 +188,8 @@
       "log": "a66fb5f390cd7c3feb625f8b4f012ae69ee11a194129a40d82f962e3a337b6c2",
       "seq": 8,
       "ts": "2026-10-09T00:00:50.521Z",
-      "prev": "e3fe9efc38bd0036aa65258ccd68c18509686439ae445b063a0d3561c381880b",
-      "hash": "b00afaa0bb23a7d929daeecf7c999e9b36fc7b2a1c49863a5a2cb4cb6c542ddb"
+      "prev": "6c7a2c883d9debba1dba0ec1d0d72fe579ce8949f87bacb2dacd955ee399a174",
+      "hash": "0274c0186f6fee57760d93c8d9d748324e345354079d6686353cb20da5bdac56"
     },
     {
       "kind": "review",
@@ -203,8 +203,8 @@
       "note": "Reviewed git diff c515df9..f1520f6. AST comparison of src/{cli,ops,reducer,views,extension,types}.ts with string literals masked shows only string/join-separator changes, except views.ts itemText now always prints the label (old '封' special case removed; ⛔ blocked is rendered) - display only. Mark '⛔' appears only in the ItemView view type; it is not persisted in the ledger. Entry kinds, fields, key formulas, validation conditions, exit codes and the packet's use in keys are unchanged. SKILL.md/SPEC.md translations faithfully keep the rules: same-rank different reviewer cannot clear, owner-only waive/defer/downgrade, defer is debt not a pass, invariants cannot be waived, execution-attribution semantics. The updated assertions in cli/extension/reducer tests are equivalent in strength (Attribution is slightly stricter; Merges and defer were already loose on base). english.test.ts drives real CLI and extension paths, including refusals, owner confirmation prompts and doc scans. Ran in a detached worktree: tsc --noEmit exit 0; node --test english/cli/extension/reducer 31/31 pass. Non-blocking: missing space after colon at src/cli.ts:55 (failed:), src/ops.ts:123 (accepted:), src/reducer.ts:345 (unsatisfied:); reducer downgradeDetails wording still differs from plan.ts planDowngrades (pre-existing), so downgrade lists may show duplicates; english.test.ts does not scan bin/ or dev/plan.yaml (dev/plan.yaml still has CJK but is not user-facing).",
       "seq": 9,
       "ts": "2026-10-09T00:03:49.363Z",
-      "prev": "b00afaa0bb23a7d929daeecf7c999e9b36fc7b2a1c49863a5a2cb4cb6c542ddb",
-      "hash": "69415c16d2efb388edbc25d96276033ecad71abb7b639e2b1545871aab4eb487"
+      "prev": "0274c0186f6fee57760d93c8d9d748324e345354079d6686353cb20da5bdac56",
+      "hash": "9a6371b347d473eee31259b2c7c67906b13a0de3910f35dbc666b90050000119"
     },
     {
       "kind": "obs",
@@ -220,8 +220,8 @@
       "log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "seq": 10,
       "ts": "2026-10-09T00:04:34.371Z",
-      "prev": "69415c16d2efb388edbc25d96276033ecad71abb7b639e2b1545871aab4eb487",
-      "hash": "3e5b5084877d740bb1830f6bff59d95742cf8b76fe9e1d8f06a2bd0a250c85d3"
+      "prev": "9a6371b347d473eee31259b2c7c67906b13a0de3910f35dbc666b90050000119",
+      "hash": "e595e33b9152485179377dec557e8e2c6daec30c7c31cf025fe0bb1408be5894"
     },
     {
       "kind": "obs",
@@ -244,8 +244,8 @@
       "log": "85b4f0d223b7455626b6131d47ca8ff818687954173ead12a3a86b34d992bfb2",
       "seq": 11,
       "ts": "2026-10-09T00:04:34.371Z",
-      "prev": "3e5b5084877d740bb1830f6bff59d95742cf8b76fe9e1d8f06a2bd0a250c85d3",
-      "hash": "e14d086e08808826a1679fe1d94a6e25092cc0268fd5312ae0091bee8877f80e"
+      "prev": "e595e33b9152485179377dec557e8e2c6daec30c7c31cf025fe0bb1408be5894",
+      "hash": "eb704478278fc4247dfd0c39d0e1c486b5a1533a793be12cbb4f663e833a24b5"
     },
     {
       "kind": "merge",
@@ -292,8 +292,8 @@
       },
       "seq": 12,
       "ts": "2026-10-09T00:04:34.371Z",
-      "prev": "e14d086e08808826a1679fe1d94a6e25092cc0268fd5312ae0091bee8877f80e",
-      "hash": "996a7269d4407bf11ab23bee9662fe05cf79426e68bdd013253aec323059d10d"
+      "prev": "eb704478278fc4247dfd0c39d0e1c486b5a1533a793be12cbb4f663e833a24b5",
+      "hash": "7bc18704699de17ffaa4be88eb5606bc1e0b6cf3e71b5bc8ea9c044e4a8ff9a2"
     }
   ],
   "plans": {
