@@ -625,13 +625,13 @@ export function checklessWarnings(plan: Plan, merged: ReadonlySet<string> = new 
 const SHELL_LOOP = /(?:^|[\s;&|(`'"])(?:for|while|until)\s[\s\S]*?[;\n]\s*do(?:\s|$)|(?:^|[;&|(`]|\$\()\s*seq(?:\s+-?\d+){1,3}(?:\s|$|[;&|)`])/;
 const CARGO_TEST = /\bcargo\s+(?:\+\S+\s+)?test\b/;
 /**
- * 0.8 (L3.3, app #22): one warning per check (or invariant) that sets `min_tests` and repeats its command in a shell
+ * 0.8 (L3.3, field report #22): one warning per check (or invariant) that sets `min_tests` and repeats its command in a shell
  * loop. exec.ts (`parseCounts`) does not add up repeated TAP, jest/vitest or pytest runs: each later `# tests`/`# pass`/`# fail`
  * line (else `1..N` plan), `Tests:` summary or pytest summary line replaces the earlier one, so min_tests sees one run's count; only cargo
  * `test result:` lines are summed. `owed plan` / `owed init` print it with the H2.2 warnings; nothing is refused.
  */
 export function loopWarnings(plan: Plan, merged: ReadonlySet<string> = new Set()): string[] {
-  // F4 (app #31): cargo test is exempt: its `test result:` lines are summed, so the count is right.
+  // F4 (field report #31): cargo test is exempt: its `test result:` lines are summed, so the count is right.
   const one = (where: string, c: CheckSpec): string[] => c.min_tests !== undefined && SHELL_LOOP.test(c.run) && !CARGO_TEST.test(c.run)
     ? [`warning: ${where} runs its command in a shell loop with min_tests ${c.min_tests}: min_tests counts only the last TAP (# tests), jest/vitest (Tests:) or pytest (N passed) summary in the log, i.e. one run, not the sum of the runs (only cargo "test result:" lines are added up)`] : [];
   return [...plan.invariants.flatMap(c => one(`invariant ${c.id}`, c)), ...plan.nodes.filter(n => !merged.has(n.id)).flatMap(n => n.checks.flatMap(c => one(`check ${c.id} of node ${n.id}`, c)))];

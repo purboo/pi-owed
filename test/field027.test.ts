@@ -154,7 +154,7 @@ test('WF1/WF2: merge-key flaky need is immediate even with an unmeasured new can
   } finally {await r.cleanup();}
 });
 
-// R-app027-1: reviewer probe 2, a trunk-red diagnosis must not hide the flaky attribution pair.
+// R-field027-1: reviewer probe 2, a trunk-red diagnosis must not hide the flaky attribution pair.
 test('WF1 repair: trunk-red flaky merge-check keeps its diagnosis first and its exact pair in why',async () => {
   const r = await fixture(true,false,true);
   try {
@@ -183,7 +183,7 @@ test('WF1 repair: trunk-red flaky merge-check keeps its diagnosis first and its 
   } finally {await r.cleanup();}
 });
 
-// R-app027-1: reviewer probe 3, satisfying evidence can be a review rather than an executor observation.
+// R-field027-1: reviewer probe 3, satisfying evidence can be a review rather than an executor observation.
 test('WF3 repair: accepted old review risk names the satisfying review and omits missing evidence',async () => {
   const r = await repo();
   try {

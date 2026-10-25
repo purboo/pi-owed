@@ -551,7 +551,7 @@ test('NE23 parity SQ #1517.2 defer: copied A debt, B fix, and retired A display 
 
 const WF_PASS = "echo '# tests 4'; echo '# pass 4'; echo '# fail 0'";
 const WF_FAIL = `echo 'owed-counts {"pass":0,"fail":4,"failed":["case one","case two","case three","case four"]}'; exit 1`;
-async function appRig() {
+async function fieldRig() {
   const r = await repo(), flag = join(r.root, 'pass'); await commitAt(r.cwd, { impl: 'base' });
   const run = `if [ -e '${flag}' ]; then ${WF_PASS}; else ${WF_FAIL}; fi`;
   const plan = { version: 1, trunk: 'main', lease: false, closure: [], invariants: [], nodes: [{ id: 'a', writes: ['impl'], checks: [{ id: 'unit', run, reads: ['impl', 'src/'], min_tests: 1 }], review: { count: 0, min_rank: 1 } }, { id: 'b', writes: ['src/b'], checks: [], review: { count: 0, min_rank: 1 } }] };
@@ -560,7 +560,7 @@ async function appRig() {
   await writeFile(flag, 'pass'); await ops.attest({ cwd: r.cwd, node: 'a' }); return { ...r, flag, a };
 }
 test('NE24 parity WF1/WF2: copied held/exposed and same-key flaky status samples', async () => {
-  await api(); const r = await appRig();
+  await api(); const r = await fieldRig();
   try {
     await parity('WF1-same-key', (await ops.readState(r)).state);
     await commitAt(r.a.worktree, { impl: 'new candidate' }); await ops.submit({ cwd: r.a.worktree, as: { role: 'writer', id: 'a#1' }, node: 'a', model: 'test' });

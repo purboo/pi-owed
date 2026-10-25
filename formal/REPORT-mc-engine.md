@@ -6,7 +6,7 @@ contract-mc.md is implemented verbatim (`Model`, `Property`); additions are the 
 `Options`, `SimOptions`, `Report`, `PropResult`, `Verdict`, `Kind`, `Trace`, `Step`, `Stats`), the type-erased
 layer (`DynModel`, `ModelInfo`, `Consts`, `Registry`, `DynReport`) and `mc::cli::main`.
 
-All runs on host bench (32 cores) via `/tmp/owed-bench/run.sh`; logs are under `/tmp/owed-bench/logs/` on the parent
+All runs on the bench host (32 cores) via `/tmp/owed-bench/run.sh`; logs are under `/tmp/owed-bench/logs/` on the parent
 host. Semantics are in `formal/README.md`.
 
 ## Tests (`cargo test --offline --release --manifest-path formal/Cargo.toml -p mc`): 27 tests, 8 files
@@ -85,7 +85,7 @@ four properties incl. `Wraps` LeadsTo) took 0.30 s at 16 workers.
   (stuttering) counterexamples. `--max-states` in simulation bounds sampled states.
 - Depth is the diameter (largest BFS level); TLC prints diameter + 1.
 - Model-provided state printers are not part of the pinned trait; traces use `{:#?}`.
-- `git describe` is taken from the checkout the binary was built from (on bench: the mirror commit); the source
+- `git describe` is taken from the checkout the binary was built from (on the bench host: the mirror commit); the source
   sha256 is the stable attribution.
 - Limits: at most 64 fairness classes and 32 LeadsTo properties per run; liveness up to 2^32−1 states.
 

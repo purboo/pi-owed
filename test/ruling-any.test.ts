@@ -1,4 +1,4 @@
-// 0.8 L3 (ruling-any, app #21, #22 part 3): a ruling reaches a sealed writer before any halt (owner-needed, writer
+// 0.8 L3 (ruling-any, field report #21, #22 part 3): a ruling reaches a sealed writer before any halt (owner-needed, writer
 // sealed non-ok, stalled), or a reviewer when the candidate's only debt is `rulings`; flaky hints offer a ruling; owed
 // plan warns about a check that loops its command with min_tests.
 import { test } from 'node:test';

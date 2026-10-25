@@ -1,5 +1,5 @@
 // G3 (0.6.0, node drive-order): repair before re-review; one message to the writer when a new candidate is needed while
-// a repairable review block is active (app 2026-10-10 #1); trunk-drift print/wake records reset when drift clears, are
+// a repairable review block is active (field report 2026-10-10 #1); trunk-drift print/wake records reset when drift clears, are
 // keyed apart from a plan node named `trunk`, and the ledger-missing notice. Exports added by this node are read through
 // the module namespace, so the base fails by assertion or "is not a function", not at import time.
 import { test } from 'node:test';
@@ -186,8 +186,8 @@ test('G3.2: rebase with a repairable block: one repair carrying the rebase instr
   assert.ok(qr?.do === 'send' && qr.reason === 'repair' && qr.rulings === ru.seq && /git rebase --onto s1 \$\(git merge-base HEAD s1\)/.test(qr.message), JSON.stringify(qr));
 });
 
-// ---------- G3.3: the app timeline ----------
-test('G3.3 app timeline: needs-parent block → halt → plan update → ruling → one repair with the ruling, no reviewer run until resubmit', () => {
+// ---------- G3.3: the field timeline ----------
+test('G3.3 field timeline: needs-parent block → halt → plan update → ruling → one repair with the ruling, no reviewer run until resubmit', () => {
   const r = rig(); r.dispatch(); r.launchWriter(); r.submit('1'); r.pass();
   assert.equal(what(act(r, runsOf(sealed(W())))), 'launch reviewer');
   r.launchReviewer(1);
@@ -410,7 +410,7 @@ async function genRig(nodeSpec: object) {
 }
 const sendsOf = (es: Entry[], reason?: string) => es.filter((e): e is SendEntry => e.kind === 'send' && (!reason || e.reason === reason));
 
-test('G3.6 regression (app #283): a repair forwarded into the running writer (no generation) does not hide its seal; row 8 sends the rebase follow-up', { timeout: 300_000 }, async () => {
+test('G3.6 regression (field report #283): a repair forwarded into the running writer (no generation) does not hide its seal; row 8 sends the rebase follow-up', { timeout: 300_000 }, async () => {
   const f = await genRig({ id: 'k', writes: ['k.txt'], checks: [{ id: 'good', run: 'grep -q good k.txt', reads: ['k.txt'] }], review: { count: 0, min_rank: 1 } });
   try {
     await writeFile(join(f.agents, 'k-writer-1.sh'), 'set -e\necho bad > k.txt; git add k.txt; git commit -qm bad; owed submit k\necho RUNNING\n');

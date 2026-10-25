@@ -1,6 +1,6 @@
-// N1 (0.10.0, app #24 part 1): a plan entry that changes only a node's checks, writes, type or drive carries the open
+// N1 (0.10.0, field report #24 part 1): a plan entry that changes only a node's checks, writes, type or drive carries the open
 // candidate (a carry submit by executor:owed in the same lock); any other spec change leaves it invalidated, and the
-// driver's row 8 sends a `submit` follow-up naming the plan entry instead of a stale `rebase` (app #1375).
+// driver's row 8 sends a `submit` follow-up naming the plan entry instead of a stale `rebase` (field report #1375).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
@@ -215,9 +215,9 @@ const view = (rid: string, state: RunView['state'], extra: Partial<RunView> = {}
 const optsOf = (o: Partial<DriveOpts> = {}): DriveOpts => ({ max: 4, repairs: 2, project: P, root: '/repo', applied: new Set(), rejected: new Map(), blobs: new Map(), ...o });
 const act = (s: State, runs: Map<string, RunView>): Action | undefined => decide(s, s.plan, runs, optsOf()).find(x => x.node === 'a');
 
-test('N1.4: row 8 after a rebased and submitted slot is invalidated by a brief change: submit naming the plan, not rebase (app #1373/#1375)', () => {
+test('N1.4: row 8 after a rebased and submitted slot is invalidated by a brief change: submit naming the plan, not rebase (field report #1373/#1375)', () => {
   const r = rig(); r.dispatch(); r.launch(); r.submit('1');
-  // Trunk moves; the slot is rebased; the writer rebases and submits (app: the writer's own rebase and submit).
+  // Trunk moves; the slot is rebased; the writer rebases and submits (field report: the writer's own rebase and submit).
   r.add({ kind: 'adopt', by: 'owner:human', channel: 'tty', trunk: 'main', prior: 's0', commit: 's1', state: { commit: 's1', tree: 't1', invKeys: {} }, changed: ['x'], commits: 1, note: 'moved' });
   r.add({ kind: 'rebase', by: 'writer:a#1', node: 'a', attempt: 1, base: 's1', from: 's0' });
   r.submit('2');

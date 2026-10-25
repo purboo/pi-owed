@@ -1,5 +1,5 @@
 // G1 (0.12): a synthetic ledger as an owed ledger directory: ledger.jsonl, each plan as a blob (its canonical JSON, a
-// YAML document whose sha256 is the plan sha synth uses) and a persistent plan cache entry per plan. Also a CLI for the bench benchmark:
+// YAML document whose sha256 is the plan sha synth uses) and a persistent plan cache entry per plan. Also a CLI for the bench-host benchmark:
 //   node test/perf/synth-dir.ts <dir> [entries] [nodes]
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';

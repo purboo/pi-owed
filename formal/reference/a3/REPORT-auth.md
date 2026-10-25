@@ -1,6 +1,6 @@
 # auth：a3 授权历史、免律与冲突的有界检查
 
-当前模型：`PiDagAuth3.tla`，SHA256 `4e33cdf2dc776ed8501dab5cd3f86805a9ea8b3e63e2ac7a46d4badd259f21c0`。新增 `Scope="free"` 任意混合探索；`Scope="scenarios"` 保留已验收的场景轮。工作目录 `/work/pi-dag`；只写本模块、本报告及 `runs/PiDagAuth3-*`，未运行 git 或修改共享文件。
+当前模型：`PiDagAuth3.tla`，SHA256 `4e33cdf2dc776ed8501dab5cd3f86805a9ea8b3e63e2ac7a46d4badd259f21c0`。新增 `Scope="free"` 任意混合探索；`Scope="scenarios"` 保留已验收的场景轮。工作目录 `/home/user/project/pi-things/pi-dag`；只写本模块、本报告及 `runs/PiDagAuth3-*`，未运行 git 或修改共享文件。
 
 下方原有场景表对应已验收 SHA256 `32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526`，不是当前 free 探索的证明。新增 free 结果、限制和精确命令见文末。
 

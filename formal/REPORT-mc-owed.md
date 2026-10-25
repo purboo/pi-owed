@@ -4,7 +4,7 @@ Model `owed05` (formal/models/src/owed05.rs, std only, registered with one line 
 formal/models/tests/owed05.rs (7 tests), scripts formal/models/scripts/{owed05-big.sh, traces.sh, explore.sh, red.sh}.
 Source modeled: trunk c4f1988 (release-0.5.0 merged): src/reducer.ts, src/ops.ts, src/plan.ts, src/extension.ts,
 src/cli.ts, docs/SPEC.md, .owed/contract-0.5.md (D19–D25 and the rulings). formal/mc is unchanged. Every result below
-ran against model source sha256 `7dc0aec6a3c526835572ee0f774a135c2dcdb92ecc99dbbad81ead6d8a1886ca` on bench, in one run: log
+ran against model source sha256 `7dc0aec6a3c526835572ee0f774a135c2dcdb92ecc99dbbad81ead6d8a1886ca` on the bench host, in one run: log
 `/tmp/owed-bench/logs/mc-owed-1-103217.log` on the parent host (tests 3x, workspace, ablations, traces, bigger bounds). There is no TLA+ original of this model, so there are no TLC
 numbers to compare with (the "ours vs TLC" column does not apply).
 
@@ -155,7 +155,7 @@ workspace passed (mc 27 tests + owed05 7), exit 0 (log 103217). Red check: on th
 the test file grafted (`formal/models/scripts/red.sh`, the cargo variant of red.sh), `cargo test -p models -- owed05`
 fails with `E0432 unresolved import models::owed05`, exit 101 (mc-owed-1-red-102801.log; the test file is unchanged since).
 
-### Bigger bounds (owedmc on bench, 16 workers; `models/scripts/owed05-big.sh`)
+### Bigger bounds (owedmc on the bench host, 16 workers; `models/scripts/owed05-big.sh`)
 
 S = EasingAuthorized, NoSubagentAuthority, NoSelfJudge, BlockWins, MergedMeansCovered, BadMergeTracesToOwner.
 

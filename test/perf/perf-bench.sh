@@ -1,4 +1,4 @@
-# N4 benchmark on bench: app ledger copy at ~/owed-test/perf-app/{owed,repo}. Not a test.
+# N4 benchmark on the bench host: production ledger copy at ~/owed-test/perf-app/{owed,repo}. Not a test.
 set -u
 W=$HOME/owed-test/perf-app
 rm -rf $W/owed/cache

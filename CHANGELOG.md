@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.33.2
+
+No behavior change. Finishes the cleanup begun in 0.33.1: every remaining local machine path, host
+name and private provider name in the docs, notes, formal run logs, scripts, tests and fixtures is
+replaced by a neutral example (`/work/...`, `bench`, generic provider names). Recorded fixture ledgers
+whose bytes changed have their hash chains recomputed. Plans and ledgers from 0.33.0 replay unchanged.
+
 ## 0.33.1
 
 No behavior change. Removed local machine paths and private provider names from the docs, notes,
@@ -702,7 +709,7 @@ improvements below do not require that runner upgrade.
   Open attempts, unrecorded and measurement worktrees do not count; a failed
   listing shows no hint. Use `owed gc --dry-run` before `owed gc`: the hint
   neither deletes anything nor promises dirty/locked worktrees can be removed.
-- **W14 replay.** On the app ledger copy (17147 entries, 1130 sampled
+- **W14 replay.** On a production ledger copy (17147 entries, 1130 sampled
   states, both engines in one replay), 0.29 reports (a)/(b)/(c) = 0/0/0 and
   uncovered 715, unchanged from 0.28 (588 suppressed obligations, 107
   repository items, 20 node items without a single command). Of the 9 sampled
@@ -800,7 +807,7 @@ upgrade all readers before recording such a waiver.
   `owed` CLI command. It separates (a) command disagreements, (b) invalid or
   incomplete commands and (c) wrong-obligation commands, and reports uncovered
   work, missing blobs, unavailable surfaces and notices not emitted rather
-  than counting them as zero errors. On the app ledger copy W14, with
+  than counting them as zero errors. On a production ledger copy W14, with
   17147 entries, sampling 464 halt sequences plus every 25th sequence gives
   1130 samples. 0.28 reports (a)/(b)/(c) = 0/0/0 and uncovered 715: 588
   parent/owner obligations not listed by the retained membership rules, 107
@@ -1460,7 +1467,7 @@ plugin together: older versions can ignore, misread or refuse these additions.
 Versions 0.18 and 0.19 were not published; their work is folded into 0.20.
 Without the additions, keys and replay remain as in 0.17 except for pooled
 repeat across several observations on one key, described below. No acceptance
-gate is weakened. Origins: app feedback and the parent's ledger metrics:
+gate is weakened. Origins: field feedback and the parent's ledger metrics:
 merge-tree invariant refusals accounted for 28 of 70 driver halts, and 16
 test-path widenings were still amended manually although already covered by
 `allow`.
@@ -1585,7 +1592,7 @@ unavailable dsa status leaves `model unknown`. See `docs/SPEC.md` §7.17.
 This release delivers the merged nodes grant (GR), trunkpark (TP),
 parentacts (PA) and granthint (GH), removing pre-authorized writes and
 trunk-red coordination round trips while counting the parent's work honestly.
-Origins: app ledger metrics (2026-10-13 22:2x: rulings per merge rose
+Origins: production ledger metrics (2026-10-13 22:2x: rulings per merge rose
 1.36 → 2.93, with widenings 1.38 and trunk-red 0.86 per merge) and the
 three-model product panel (2026-10-13). Parent rulings pin the behavior
 below; no acceptance gate is weakened.
@@ -1660,13 +1667,13 @@ only hints. No acceptance gate is weakened.
 
 This release delivers the merged node refusalnotice (FG, TD), showing distinct
 failure causes and the trunk-vs-merge-tree delta in merge refusals without
-weakening any gate. Origins: app feedback on owed 0.16.0 in
+weakening any gate. Origins: field feedback on owed 0.16.0 in
 `/tmp/dsa/owed-requirements.md` (2026-10-13 15:1x): AQ-Q halt #7285 listed
 11 failures with the same `exact-source host required` precondition, but
 finding the cause required a blob lookup; the invariant had passed on trunk
 698517a8 (#7271) about ten minutes earlier without that context in the notice.
 
-- **Group failing tests by error (refusalnotice, FG1–FG3; app
+- **Group failing tests by error (refusalnotice, FG1–FG3; field report
   AQ-Q feedback).** New measurements parse node TAP YAML `error` and
   `location` diagnostics and both cargo panic formats, grouping tests by
   normalized message, ordered by frequency then first appearance. TAP
@@ -1691,7 +1698,7 @@ finding the cause required a blob lookup; the invariant had passed on trunk
   an unfinished message cannot consume the next panic header, failed-test
   line or stdout record, steal another thread's cause/location, or masquerade
   as a new-style location. LF and CRLF logs retain independent records.
-- **Show the trunk-to-merge delta (refusalnotice, TD1–TD3; app
+- **Show the trunk-to-merge delta (refusalnotice, TD1–TD3; field report
   #7271/#7285 feedback).** A failing merge-tree invariant measured for the
   refused node shows the latest pass of that obligation on the current trunk:
   `inv:<id>: pass on trunk <trunk12> (#<seq>) → fail on merge tree <commit12> (#<seq>)`.
@@ -1715,13 +1722,13 @@ This release delivers the merged nodes stalesend (SR, HA), reviewdedup
 (RR) and compactreply (CR), keeping rejected sends from stranding recoverable
 attempts, reporting questions while halted, avoiding redundant reviewers after
 unchanged-key resubmits and shortening parent act replies, without weakening
-any gate. Origins: app feedback on owed
+any gate. Origins: field feedback on owed
 0.16.0 in `/tmp/dsa/owed-requirements.md` (2026-10-13 13:4x, a forced dsa
 1.0.39 orchestrator restart; 14:3x, a halted writer's hidden question;
 14:4x, CMP-META attempt 2's evidence-only resubmit and redundant reviewer).
 The parent's rulings below pin the behavior where the original asks changed.
 
-- **Recover attempts after a rejected send (stalesend, SR1–SR4; app
+- **Recover attempts after a rejected send (stalesend, SR1–SR4; field report
   forced-restart feedback).** A rejected send of the open attempt is
   superseded by a later ledger entry: a resume or submit of that same
   node/attempt, or another send of the attempt to the same rid that is not
@@ -1740,7 +1747,7 @@ The parent's rulings below pin the behavior where the original asks changed.
   the send, with `owed abandon <node>` only as the last option. That resume
   prevents the same send from re-halting. Rejected run requests remain fixed
   for the attempt and still require fixing the cause and abandoning it.
-- **Report questions even while halted (stalesend, HA1–HA2; app
+- **Report questions even while halted (stalesend, HA1–HA2; field report
   14:3x feedback).** The driver still reports asking writers and reviewers
   of the current candidate with the existing question text, answer/ruling
   hint, rid/qid/rev and once/quiet semantics. The slot action does not clear
@@ -1754,7 +1761,7 @@ The parent's rulings below pin the behavior where the original asks changed.
   other notices retain their precedence. `owed status` and brief stay
   ledger-only; the driver's asking notify is the question channel.
 - **Reuse reviewers across unchanged review keys (reviewdedup, RR1–RR3;
-  app 14:4x feedback, CMP-META #7204/#7208/#7209/#7211).** The current
+  14:4x field feedback, CMP-META #7204/#7208/#7209/#7211).** The current
   candidate's review epoch starts at the earliest submit of the open attempt
   whose required `review` and `closure-review` keys remain unchanged through
   the current candidate. Reviewer launches after that epoch start remain
@@ -1770,13 +1777,13 @@ The parent's rulings below pin the behavior where the original asks changed.
   show each principal once, using its latest qualifying review, including
   JSON `evidence` and `observations`. Deduplication is view-only: stored and
   replayed evidence and distinct-principal satisfaction are unchanged.
-- **Keep parent act replies brief (compactreply, CR1–CR3; app
+- **Keep parent act replies brief (compactreply, CR1–CR3; field report
   2026-10-13 15:xx feedback).** Parent act tool replies use
   `renderStatusBrief`: the status outcome line, non-empty `Needs you` items
   and commands, then `Details: owed status · owed why <node>`, without
   progress or debt lists. `dispatch` retains its packet and subagents
   arguments; `plan`, `edit` and `amend` retain their act, carry and downgrade
-  lines. The app addendum is included: `rule` and `defer` return recorded
+  lines. The field-report addendum is included: `rule` and `defer` return recorded
   entries plus the brief, replacing the report and omitting
   `Escapes (all time)`. `abandon` and `resume` retain the entry, node phase
   and resume's waits-for tail, then the brief instead of a full receipt.
@@ -1802,7 +1809,7 @@ driver `stop` effect, which 0.16.1 does not add. None is claimed as delivered.
 This release delivers the six merged nodes answerrev (AR), slotsetup (SS),
 mergeorder (MO), flakyhint (FH), nits016 (NT) and driveload (DL), removing
 observed answer, prerequisite, merge-queue and driver-load costs without
-weakening any gate. Origins: the dsa 1.0.38 note (2026-10-13 04:2x), app
+weakening any gate. Origins: the dsa 1.0.38 note (2026-10-13 04:2x), field
 feedback (2026-10-13 07:3x and 08:4x) in
 `/tmp/dsa/owed-requirements.md`, three non-blocking 0.15 metrics/summary
 review notes, and `/tmp/pi/pi-performance-diagnosis-2026-10-13.md` task B.
@@ -1824,7 +1831,7 @@ The parent's rulings below pin the behavior where the original asks changed.
   open driver question, not an answered quiet line. Answers do not
   invalidate candidates; reviewers still acknowledge in-scope rulings.
 - **Prepare writer slots without committing setup artifacts (SS;
-  app 08:4x feedback, HOST-CASE-DOC-WIRE #6327 and five other slots
+  08:4x field feedback, HOST-CASE-DOC-WIRE #6327 and five other slots
   missing prerequisite links).** Dispatch runs `slot_setup` when it is
   a string, otherwise the plan's `setup`, in the new worktree before
   recording dispatch; `slot_setup: false` skips it. CLI, pi and driver
@@ -1847,7 +1854,7 @@ The parent's rulings below pin the behavior where the original asks changed.
   persist across worktrees. `slot_setup` enters no key and changes alone
   invalidate no candidate/evidence; existing `setup` keys are unchanged.
   Rebase reuses the worktree without rerunning setup.
-- **FIFO merges with explicit-wait priority (MO; app 07:3x feedback,
+- **FIFO merges with explicit-wait priority (MO; 07:3x field feedback,
   QA-MPV1-MARKER #6067, HOST-ACQ-REACH, BG-ACQ-CLEANUP and
   LY-ROAD-LEGACY waiting accepted for 1–4 hours).** Accepted open attempts
   merge first when named by an outstanding latest `resume --after` wait,
@@ -1863,7 +1870,7 @@ The parent's rulings below pin the behavior where the original asks changed.
   order. A continuously accepted, eligible node merges after at most the
   accepted nodes ahead of it; only a waited-on node can newly overtake it.
   Waits, halts, measurements and merge guards still apply.
-- **Name intermittent merge failures and possible fixes (FH; app
+- **Name intermittent merge failures and possible fixes (FH; field report
   07:3x feedback, repeated names at #4614/#5903 and #5037/#5325,
   CUT-FROZEN-HTTP refusals while QA-MPV1-MARKER waited).** CLI merge
   refusals, driver merge-refused halts and `owed why` block/merge-check
@@ -1891,7 +1898,7 @@ The parent's rulings below pin the behavior where the original asks changed.
   current merge key can be queried. Unverified debt is not acceptance
   evidence; no gate, key or ledger schema changes.
 - **Reuse verified state caches in every driver load (DL; pi performance
-  diagnosis 2026-10-13 task B, app driver at 113–145% CPU and about
+  diagnosis 2026-10-13 task B, a production driver at 113–145% CPU and about
   1.9 GiB RSS).** Driver passes, reaping, refusal and status/state reads
   use the ops replay memo/disk snapshot and persistent parsed-plan cache,
   still reading and verifying the entire ledger hash chain on every load.
@@ -1920,8 +1927,8 @@ Owed 0.15 ignores top-level `slot_setup`, runs no setup at dispatch and
 adds no key for it (#1601); a plan using it needs 0.16 for setup to run.
 
 Driver caching does not remove cold load: a fresh driver process still
-pays one cold load (on app about 20 seconds). On a 7,071-entry / 279-plan
-app ledger, warm loads measured about 0.1 seconds (213x faster), and
+pays one cold load (on the host project about 20 seconds). On a 7,071-entry / 279-plan
+production ledger, warm loads measured about 0.1 seconds (213x faster), and
 loads after +10 entries about 0.09 seconds (328x faster). These are warm
 load measurements, not a cold-start or whole-driver-pass guarantee.
 
@@ -1936,7 +1943,7 @@ claimed as delivered in this release.
 
 This release delivers the merged nodes invred (IR), knownred (KR),
 notices (QN), summary (SQ) and metrics (MT): quiet by default, loud
-precisely, measurable. Origins: app feedback on 0.14 (2026-10-12 22:00)
+precisely, measurable. Origins: field feedback on 0.14 (2026-10-12 22:00)
 in `/tmp/dsa/owed-requirements.md`, items 1–3, plus another owed user's
 report (2026-10-12) about internal notices, a late old-driver `stopped`
 and mixed historical audit/current blockers/version hints. Metrics comes
@@ -1944,7 +1951,7 @@ from the product goal of measuring interruptions and acceptance time.
 The parent's rulings below pin the behavior where the original asks changed.
 
 - **Refresh trunk invariants and inherit bounded existing failures (IR;
-  app inv:next-tests, INFRA-PREBUILT-KERNEL #4159, AQ-KF #4178,
+  field report inv:next-tests, INFRA-PREBUILT-KERNEL #4159, AQ-KF #4178,
   KX-RUNTIME-GC escape #4188 and run-string workaround R139).**
   `owed attest --trunk` (pi `owed_attest {trunk: true}`, no node) records
   executor `refresh` entries for current-plan invariant keys that differ
@@ -1973,7 +1980,7 @@ The parent's rulings below pin the behavior where the original asks changed.
   repo-scoped `inv:<id>` notices carry the obligation/key, separate from
   trunk drift, and are dropped before pi delivery if removed, resolved
   or on a different key. Failed ledger reads retain the notice.
-- **Exact known-red debt owned by a fix node (KR; app item 2,
+- **Exact known-red debt owned by a fix node (KR; field report item 2,
   replacing run-string exclusions).** Invariants accept
   `known_red: [{test: <exact obs.failed name>, fix: <plan node id>}]`,
   at most 20 unique names, with fixes in the same plan; it enters no key.
@@ -1991,7 +1998,7 @@ The parent's rulings below pin the behavior where the original asks changed.
   its unfinished repair (#1485). After the fix merges the entries lapse;
   `status --full` lists them as removable, and recurrence is ordinary red.
 - **Answered questions stay quiet; old drivers do not look current (QN;
-  app item 3, HOST-VOCAB, LY-TFL-K and ST-LOCK repeated questions,
+  field report item 3, HOST-VOCAB, LY-TFL-K and ST-LOCK repeated questions,
   plus the user's notice/late-`stopped` report).** The driver and pi
   delivery revalidation suppress questions covered by a recorded answer
   for the same run/question and no newer revision. A covered asking run
@@ -2080,7 +2087,7 @@ this release.
 ## 0.14.0
 
 This release delivers the merged nodes bigdiff (BD), policy (PR), hold (AH)
-and trunkred (TR). Origins: app feedback (2026-10-12) in
+and trunkred (TR). Origins: field feedback (2026-10-12) in
 `/tmp/dsa/owed-requirements.md`, the 15:5x items 1–3 and 16:4x items 4–5:
 KX-DRIVING-PROFILE; R122 and ruling #3856 on LY-ROAD-K;
 KX-REC-FOCUS #3917/#3925/#3926; KX-RUNTIME-GC #3896/#3919.
@@ -2215,14 +2222,14 @@ periodic re-measurement of reused verdicts; worker crash not replaying
 ## 0.13.0
 
 This release delivers the merged nodes lease (LE), waits (FL), repeat (RC),
-answer (AN), edit (ED), sweep (SW) and quiet (QT). Origins: app feedback in
+answer (AN), edit (ED), sweep (SW) and quiet (QT). Origins: field feedback in
 `/tmp/dsa/owed-requirements.md` §65, including the 41h list (2026-10-11)
 and the machine-lock and morning/idle observations (2026-10-12), plus
 `/tmp/dsa/owed-feedback-2026-10-10.md` §39 on escapes found by accident.
-Quiet comes from another owed user's feedback (2026-10-12), not app.
+Quiet comes from another owed user's feedback (2026-10-12), not the host project.
 The parent's rulings below pin the behavior where the original asks changed.
 
-- **Measurements hold the machine lease (LE; app §65 machine-lock
+- **Measurements hold the machine lease (LE; field report §65 machine-lock
   observation).** Standalone attest, merge, adopt and genesis measurements
   (including init's background attest) wait under
   `pi-durable-subagents hold machine --shared` when dsa is available.
@@ -2234,7 +2241,7 @@ The parent's rulings below pin the behavior where the original asks changed.
   Results say `lease: machine (shared)`. The release also strengthens the
   lease test to compare non-empty check and invariant keys with and without
   the inherited marker.
-- **Waiting, reports and backlog (FL; app §65, 41h list #1/#6 and idle
+- **Waiting, reports and backlog (FL; field report §65, 41h list #1/#6 and idle
   observation; ruling #1245).** An open slot with unmerged current-plan
   dependencies waits automatically: no submit/repair/ruling follow-ups,
   measurement or missing-candidate halt, while questions remain visible.
@@ -2252,7 +2259,7 @@ The parent's rulings below pin the behavior where the original asks changed.
   reported/later counts and repeat every `drive.idle_rewake_min` minutes
   (default 60, 0 off). Existing invariant-id entry points accept `inv:<id>`;
   `why` can show a trunk invariant, and unknown ids list valid spellings.
-- **Repeated measurements and explicit counts (RC; app §65, 41h list
+- **Repeated measurements and explicit counts (RC; field report §65, 41h list
   #2/#3 and flaky invariants; rulings #1243, #1247/#1274).** Checks and
   invariants accept `repeat: {runs: N, need: K}` with
   `1 <= K <= N <= 9` (`need` defaults to N). Commands run sequentially
@@ -2272,7 +2279,7 @@ The parent's rulings below pin the behavior where the original asks changed.
   a tail of at most 15 lines. Reused failing merge observations retain
   names and tail, and failed red checks (including `red_expect` mismatch)
   get the same names-first note (#1274).
-- **Answer in one act (AN; app §65 morning observation).** Parent/owner
+- **Answer in one act (AN; field report §65 morning observation).** Parent/owner
   `owed answer <node> [--qid Q] [--rid R] "<text>"` discovers one open
   writer/reviewer question, refusing ambiguity or absence with the open
   question list. It records one node-scoped rule with `writer: false` and
@@ -2285,7 +2292,7 @@ The parent's rulings below pin the behavior where the original asks changed.
   undelivered rulings. Other runs receive it normally. Acknowledgment scope
   is unchanged: reviewers still acknowledge all in-scope rulings, including
   answers; reviewer acknowledgment follow-ups retain that complete context.
-- **Atomic plan edits (ED; app §65, 41h list #4).**
+- **Atomic plan edits (ED; field report §65, 41h list #4).**
   `owed edit <node> --set path=yaml ... [--unset path ...] [--node-new]
   [--rule TEXT [--writer]] [--resume [--after a,b] [--expect report]]
   --note WHY [--dry-run] [--plan FILE]` edits node fields, checks and
@@ -2298,7 +2305,7 @@ The parent's rulings below pin the behavior where the original asks changed.
   follows the append, and a replacement failure reports the recorded seqs
   and recovery file. Dry run prints diff/downgrades without writing.
   `owed amend` remains available.
-- **Advisory sweeps and unguarded paths (SW; app feedback §39; ruling
+- **Advisory sweeps and unguarded paths (SW; field feedback §39; ruling
   #1331).** Top-level `sweep: {run, timeout_s, reads?}` enables
   `owed sweep [--commit C]` on a fresh detached trunk tree, with setup/exec
   and the shared lease. Completed sweeps record commit, definition key,
@@ -2362,14 +2369,14 @@ restart existing pi sessions.
 ### Deferred
 
 Merge train #22; measure on merged trunk #23; milestone-level evidence/debt
-(41h list #5); periodic re-measurement of reused invariant verdicts (app
+(41h list #5); periodic re-measurement of reused invariant verdicts (field
 feedback §39.2); worker crash not replaying `session_start`; 0.10 carry/amend
 nits. None is claimed as delivered in this release.
 
 ## 0.12.0
 
-The app pi-zip performance report (N4) showed ledger replay freezing pi's
-UI even after 0.10's reducer speed-up. App feedback §38 in
+The host project's pi-zip performance report (N4) showed ledger replay freezing pi's
+UI even after 0.10's reducer speed-up. Field feedback §38 in
 `/tmp/dsa/owed-feedback-2026-10-10.md` added the in-memory extension version
 skew and the low-disk shared-build-dir pattern. This release delivers G1
 snapshot replay, G2 tool workers and G3's non-blocking 0.11 review nits,
@@ -2396,18 +2403,18 @@ with the parent's rulings #1176, #1198 and #1200.
   message and CLI exit 1 (including `verify`); other invalid entries keep
   their errors.
 
-  Measured on bench against 0.11.0, with warm disk snapshots:
+  Measured on the bench host against 0.11.0, with warm disk snapshots:
 
   | Ledger / operation | 0.11.0 | 0.12.0 |
   |--------------------|--------|--------|
-  | App, 2229 entries, `status` | about 1.04 s | 293 ms (about 28%) |
+  | Production ledger, 2229 entries, `status` | about 1.04 s | 293 ms (about 28%) |
   | Synthetic, 10000 entries / 200 nodes, `status` | 1.53 s | 378 ms |
 
   Cold replay stays within +10% of 0.11.0; an in-process load after
   appending one entry spends <= 50 ms replaying. Interleaved confirmation
-  runs measured warm app at 293/1083 ms (27.1%) and synthetic at
+  runs measured the warm production ledger at 293/1083 ms (27.1%) and synthetic at
   378/1612 ms, with cold overhead +6.3% and +6.4%, respectively.
-- **Tools off pi's main thread (G2; pi-zip N4, app §38).** Extension
+- **Tools off pi's main thread (G2; pi-zip N4, field report §38).** Extension
   loading eagerly starts one shared `worker_threads` worker per pi
   process. Tool calls, `/owed`, drive-watch revalidation and background
   genesis attests run there; schemas, owner dialogs, rendering and watcher
@@ -2439,7 +2446,7 @@ with the parent's rulings #1176, #1198 and #1200.
   until abandoned; ruling #1176 lets `owed abandon <node>` close that slot
   without re-adding the node, changing no other removed-node operation.
   Failed-send text names the node as a word. `reuseHooks.beforeTouch`
-  remains a documented test-only seam. The skill documents app's
+  remains a documented test-only seam. The skill documents the host project's
   low-disk alternative to per-tree build dirs: shared dirs serialized by
   `flock`, a per-dir last-checkout marker and tracked-file touch when the
   builder changes, leaving `exec.touch` at its default so keys stay stable.
@@ -2469,7 +2476,7 @@ reported no further unfixed product nits after rulings #1200 and #1198.
 
 ## 0.11.0
 
-The app feedback #12 and #27-#36 reported halts and wrong verdicts that
+Field reports #12 and #27-#36 reported halts and wrong verdicts that
 owed caused itself. The parent's diagnosis changed two of the asks. #35 is
 a driver race, not reviewers forgetting: in all three `review-missing`
 halts the review was recorded 33-60 s before the halt, by a run that
@@ -2478,7 +2485,7 @@ not a semantic merge conflict but nondeterminism: the attribution rerun
 of the same merge tree passed, because reused trees linked stale build
 artifacts (#32b), fixed by F6 plus a waiver that reaches merge keys (F3).
 
-- **Fresh act (F1; app #35).** Every `launch`, `send`, `rebase` and
+- **Fresh act (F1; field report #35).** Every `launch`, `send`, `rebase` and
   `halt` the driver records as the result of `decide` passes `since: S`,
   the seq of the state the pass loaded. Under the ledger lock, an entry
   after S that names the node (its `node` or `subject`, a ruling covering
@@ -2492,7 +2499,7 @@ artifacts (#32b), fixed by F6 plus a waiver that reaches merge keys (F3).
   without recording (at once for a `rejected` or `pruned` run). The asking
   notify ends with a hint to record a contract or scope answer with
   `owed rule --nodes <node> "<decision>"`.
-- **Environment failures wait (F2; app #36, #12).** Per ruling #1094, a
+- **Environment failures wait (F2; field report #36, #12).** Per ruling #1094, a
   measurement is `error` with a note starting `environment: ` only when it
   failed before its command ran (tree preparation, spawn, `setup`), or when
   it exited non-zero with no failing test counted and `ENOSPC`, `No space
@@ -2507,7 +2514,7 @@ artifacts (#32b), fixed by F6 plus a waiver that reaches merge keys (F3).
   logs a waking `disk-full` event, sleeps 60 s and continues. `owed gc`
   also removes free node-check trees whose check belongs only to merged or
   abandoned nodes.
-- **Waiver reaches merge keys (F3; app #34, #29, #12).** The blocks an
+- **Waiver reaches merge keys (F3; field report #34, #29, #12).** The blocks an
   owner waiver cites in `accept_risk` are cleared whatever their key,
   merge keys included; every cited seq must be an active or flaky exec or
   judgment block of the waiver's node and obligation. A merge-result fail
@@ -2515,7 +2522,7 @@ artifacts (#32b), fixed by F6 plus a waiver that reaches merge keys (F3).
   attribution rerun) satisfies `owed merge`. The waiver's own key binding
   is unchanged, and the confirmation and result text say the obligation is
   no longer measured on the waived key.
-- **Removed nodes and routing fixes (F4; app #27, #31, #33c, #34).** A
+- **Removed nodes and routing fixes (F4; field report #27, #31, #33c, #34).** A
   node absent from the current plan and not merged has phase `removed`:
   never ready, dispatched or selected by the driver. `owed resume` refuses
   when an active needs-parent review block awaits a ruling, naming
@@ -2523,7 +2530,7 @@ artifacts (#32b), fixed by F6 plus a waiver that reaches merge keys (F3).
   node, kind, reason and target. The `min_tests` loop warning skips
   `cargo test` commands. A timed-out describe is retried once per pass, and
   a node in a `resume --after` wait gets no `describe-failed` notify.
-- **Writer rulings and waits during merges (F5; app #33a, #33b).**
+- **Writer rulings and waits during merges (F5; field report #33a, #33b).**
   `owed rule --writer` (pi `owed_rule` `writer: true`) records `writer:
   true`; recorded after a named node's open submit it invalidates that
   candidate (a new submit is needed, the same commit is fine), and the
@@ -2532,7 +2539,7 @@ artifacts (#32b), fixed by F6 plus a waiver that reaches merge keys (F3).
   without `--writer` are unchanged. When a merge measuring at the time of
   a `resume --after` ends refused, the driver reports `waiting` and records
   no halt.
-- **Reused trees never link stale artifacts (F6; app #32b).**
+- **Reused trees never link stale artifacts (F6; field report #32b).**
   `exec.touch: reset | always | never` (default `reset`, reused trees only):
   `reset` sets every tracked file's mtime to now when a reused tree changes
   commit, `always` before every reused measurement, `never` keeps Git's
@@ -2565,19 +2572,19 @@ by the environment classifier.
 
 ## 0.10.0
 
-The app feedback #24-#26 reported parent round trips that owed caused
-itself: plan v69 (app #1373) changed only a check definition of one node,
+Field reports #24-#26 reported parent round trips that owed caused
+itself: plan v69 (field report #1373) changed only a check definition of one node,
 which invalidated its candidate; the driver then sent a `rebase` follow-up
 (#1375) and the writer resubmitted the same commit at the same base
 (#1378). A moving trunk failed dispatch and plan CAS, and a writes question
 cost a hand-edited plan plus a separate ruling. Separately the pi-zip
 agent's profile showed every op replaying the whole ledger: 9.6-13.5 s per
-op on the app ledger (1558-1601 entries, 85-87 nodes), with the pi session
+op on a production ledger (1558-1601 entries, 85-87 nodes), with the pi session
 UI frozen because pi tools run on its main thread. N1 carries candidates
 across measurement-only plan changes, N2 retries CAS under a moving trunk,
 N3 adds `owed amend`, and N4 makes replay fast.
 
-- **Carry (N1; app #24).** When a plan change invalidates a node's open
+- **Carry (N1; field report #24).** When a plan change invalidates a node's open
   candidate and the node spec differs only in `checks`, `writes`, `type`
   and `drive` (plan-wide `setup`, `exec` and `closure` changes do not
   matter), the same `owed plan` call appends, in the same ledger lock and
@@ -2602,10 +2609,10 @@ N3 adds `owed amend`, and N4 makes replay fast.
   entry invalidated the latest submit, the `submit` follow-up names it:
   "plan #P changed this node's spec (<fields>); resubmit (re-run checks if
   needed, then `owed submit <node>`)".
-- **CAS retry (N2; app #25, #24 parts 2-3).** A dispatch rollback deletes
+- **CAS retry (N2; field report #25, #24 parts 2-3).** A dispatch rollback deletes
   its new branch with `git update-ref -d refs/heads/<branch> <base>`, a
   compare-and-delete in one Git transaction, whatever the main worktree's
-  HEAD (the "not fully merged" leftover of app #25 is gone). A ref that
+  HEAD (the "not fully merged" leftover of field report #25 is gone). A ref that
   moved, or a branch still checked out in a worktree, is kept and reported
   under the existing `git branch -d` rollback label. `owed dispatch` and
   `owed plan` retry a CAS refusal, up to 3 attempts in total, while the
@@ -2618,7 +2625,7 @@ N3 adds `owed amend`, and N4 makes replay fast.
   adding the new command as a new check id; detection is unchanged. On
   `owed plan`, the check-less and loop warnings skip nodes merged in the
   ledger; `owed init` warnings are unchanged.
-- **`owed amend` (N3; app #26).** `owed amend <node> --writes
+- **`owed amend` (N3; field report #26).** `owed amend <node> --writes
   +<path>[,+<path>...] --note "<limit>" [--plan <file>]` (pi `owed_amend`
   `{node, writes, note, plan?, as?, cwd?}`) widens one node's writes. The
   plan file is `--plan`, else the latest plan entry's `path`. The edit
@@ -2644,7 +2651,7 @@ N3 adds `owed amend`, and N4 makes replay fast.
   entry. A differential test (test/perf.test.ts) compares State, queries,
   views and `validateDraft` decisions with a frozen copy of the previous
   reducer at every k-th prefix of fuzz, synthetic and real ledgers.
-  Measured on bench with a copy of the app ledger (1601 entries, 87 nodes,
+  Measured on the bench host with a copy of a production ledger (1601 entries, 87 nodes,
   87 plans, 15.5 MB of YAML) and a git repo, full `owed status` path:
 
   | Case                            | before          | 0.10.0          |
@@ -2688,7 +2695,7 @@ off pi's main thread (to a worker or child process). Still open from
 0.9.0: per-check "measure on the candidate merged with the current trunk"
 (#23); reading dsa 1.0.34 `delivery: "forwarded"` directly; review #950
 nit: two reclaimers that both remove the same dead-pid token older than
-1 h can, in a narrow window, end with two holders of one reuse tree; app
+1 h can, in a narrow window, end with two holders of one reuse tree; field report
 #22 parts 1-2, a merge train. Still open from 0.8.0: `error_expect` for
 environment-precondition failures (#12); per-tier model routing (#11); a
 plan warning for unknown node keys; attest-busy nits (a dispatch whose
@@ -2724,14 +2731,14 @@ that changes the flaky test itself does not clear the block.
 
 ## 0.9.0
 
-A app merge took 13.3 min (feedback #23): the sum of its merge-tree checks
+A production merge took 13.3 min (feedback #23): the sum of its merge-tree checks
 run one after another (node checks 47+46+11 s, invariants 36, 86, 318, 16,
 103 and 83 s). Each run also measured in a fresh /tmp/owed-run-*/tree path;
 cargo fingerprints include that path and every file mtime was new, so every
 run rebuilt from scratch and incremental builds never helped. M1 measures a
 merge's jobs in parallel, M2 reuses measurement trees, and M3 documents both.
 
-- **Parallel merge-tree measurement (M1; app #23).** The new plan field
+- **Parallel merge-tree measurement (M1; field report #23).** The new plan field
   `exec.parallel` (integer >= 1, default 1) is the number of jobs one `owed
   merge` measures at once: its genesis/invariant jobs and its merge-result
   jobs share one queue started in job order. The same applies to `owed
@@ -2746,7 +2753,7 @@ merge's jobs in parallel, M2 reuses measurement trees, and M3 documents both.
   each observation once its predecessors are recorded, also after an
   abort; a failure to record one starts no further job, waits for the
   running ones and then fails. A job that throws likewise stops new starts.
-- **Reused measurement trees (M2; app #23).** The new plan field `exec.trees`
+- **Reused measurement trees (M2; field report #23).** The new plan field `exec.trees`
   is `fresh` (default: a new temporary worktree per run, removed afterwards) or
   `reuse`. With `reuse`, check, red, strength and invariant runs use a stable
   detached worktree `<git common dir>/owed/trees/<kind>-<check id>-<k>`
@@ -2801,7 +2808,7 @@ exactly as in 0.8.0. A ledger whose plan sets them needs owed >= 0.9.0 to
 replay.
 
 **Deferred.** Per-check "measure on the candidate merged with the current
-trunk" (#23; app: low priority). Reading dsa 1.0.34 `delivery:
+trunk" (#23; field report: low priority). Reading dsa 1.0.34 `delivery:
 "forwarded"` directly. Review #950 nit: two reclaimers that both remove the
 same dead-pid token older than 1 h can, in a narrow window, end with two
 holders of one reuse tree (rename the old token to a unique name before
@@ -2856,17 +2863,17 @@ bind a reviewer's identity to its dsa call; rulings that uphold or overrule
 a named block. The formal model does not cover resume, superseded blocks,
 parallel measurement or reused trees. A new candidate that changes the
 flaky test itself does not clear the block; whether it should is deferred.
-App #22 parts 1-2: a merge train is deferred.
+Field report #22 parts 1-2: a merge train is deferred.
 
 ## 0.8.0
 
-The app run of 2026-10-10 reported recovery, check-definition and ruling
+The host project's run of 2026-10-10 reported recovery, check-definition and ruling
 routing frictions (feedback #16-#22): L1 adds resume without an obligation
 (#16-#18), L2 supersedes blocks after a check definition changes (#19-#20),
 and L3 delivers rulings before more halts and warns about looped checks
 (#21, #22 part 3).
 
-- **Resume without an obligation (L1; app #16-#18).** `owed resume <node>
+- **Resume without an obligation (L1; field report #16-#18).** `owed resume <node>
   [--after <node>] [--note TEXT]` (pi `owed_resume`) records a `resume` entry
   on the node's open attempt. Only a parent or owner may resume; writers,
   reviewers, executors and `parent:drive` are refused, as are a missing open
@@ -2892,7 +2899,7 @@ and L3 delivers rulings before more halts and warns about looped checks
   guidance the writer and reviewers must follow and acknowledge. Halts and
   wakes naming a run now include its dsa call address, when known, as
   `to:"<wid>/<key>"`, including asking notices without a reported question.
-- **Supersede changed check definitions (L2; app #19-#20).** Replaying a
+- **Supersede changed check definitions (L2; field report #19-#20).** Replaying a
   plan entry marks every active or flaky execution block on `check:<id>`,
   `red:<id>` or `strength:<id>` as `superseded` when the check definition
   differs from the plan of its failing observation, and records
@@ -2912,7 +2919,7 @@ and L3 delivers rulings before more halts and warns about looped checks
   tree: slot-only build outputs, caches and node_modules are absent. They
   must prepare their own artifacts, for example through `setup`; fixing an
   environmental failure in the check definition supersedes the old block.
-- **Rulings before halts and loop warnings (L3; app #21, #22 part 3).** An
+- **Rulings before halts and loop warnings (L3; field report #21, #22 part 3).** An
   undelivered in-scope ruling naming the node can now reach a sealed writer
   before the owner-needed notify (including flaky or rank >= 2 blocks),
   row 7's writer-sealed-non-ok halt and the stalled halt. No reviewer run of
@@ -3008,19 +3015,19 @@ that uphold or overrule a named block.
 
 The formal model does not cover resume or superseded blocks. A new
 candidate that changes the flaky test itself does not clear the block;
-whether it should is deferred. App #22 parts 1-2 are not included: driver
+whether it should is deferred. Field report #22 parts 1-2 are not included: driver
 self-rebase is not needed; a merge train is deferred.
 
 ## 0.7.0
 
-The app run of 2026-10-10 reported lock, threshold, budget, routing and
+The host project's run of 2026-10-10 reported lock, threshold, budget, routing and
 throughput frictions on 0.6.0/0.6.1 (feedback #8-#14): K1 answers the attest
 lock collisions (#8, #12, and the global lock of #15), K2 the bare halt and
 waiver notes (#8, #12), K3 per-node models (#11), K4 the merge refused by an
 unrelated plan update (#14), K5 the repair budget and undelivered rulings (#8,
 #9, #11) and K6 the serial driver (#13).
 
-- **Per-node attest lock, busy exit (K1; app #8, #12, #15).** In app a writer
+- **Per-node attest lock, busy exit (K1; field report #8, #12, #15).** In the host project a writer
   ran `owed attest`, as `owed why` told it to, while the driver attested the
   same node; the second attest waited 60 s for the repository-wide `attest`
   lock, failed with `Internal error: timed out waiting for attest` (exit 3), and
@@ -3049,7 +3056,7 @@ unrelated plan update (#14), K5 the repair budget and undelivered rulings (#8,
   with `the driver measures your candidate; do not run owed attest`, and every
   driver writer task carries that line; a manual dispatch stores its packet
   without it.
-- **Count notes, block notes, what a waiver means (K2; app #8, #12).** In app
+- **Count notes, block notes, what a waiver means (K2; field report #8, #12).** In the host project
   a check that ran 100 of 100 passing tests against `min_tests: 200` showed only
   `zero tests or min_tests unmet`. A non-red check that fails only on its count
   now notes `min_tests unmet: counted <tests> (<pass> pass, <fail> fail[, <skip>
@@ -3058,7 +3065,7 @@ unrelated plan update (#14), K5 the repair budget and undelivered rulings (#8,
   of an execution block's failing observation on the block line (` — note:
   …`), and `owed status` on the pending item it holds (` — note #<seq>: …`),
   one line of at most 200 characters (`--json`: `blocks[].note`,
-  `pending.<group>[].blockNotes`). In app an owner learned only from the waived status
+  `pending.<group>[].blockNotes`). In the host project an owner learned only from the waived status
   that `--accept-risk` stopped measurement (#12). `owed waive` (CLI text,
   `--json` field `meaning`, the pi tool's text and details) now states what the
   reducer applies (review #781): `waived <obligation> for candidate #<submit>
@@ -3075,7 +3082,7 @@ unrelated plan update (#14), K5 the repair budget and undelivered rulings (#8,
   so a later entry cannot relabel it. `owed why` shows a waived item as
   `<subject>/<obligation> waived (not measured for this candidate) by <who>:
   <reason> (<channel>)`.
-- **Node models (K3; app #11).** In app every driver-launched writer used the
+- **Node models (K3; field report #11).** In the host project every driver-launched writer used the
   plan's one writer model, so cheaper slots stayed idle. A node may set
   `drive: {writer?: {agent?, model?}, reviewer?: {agent?, model?}}`, validated
   like the plan's roles (unknown keys and bad types are errors). For each role
@@ -3089,7 +3096,7 @@ unrelated plan update (#14), K5 the repair budget and undelivered rulings (#8,
   (<model>) · reviewer <agent> (<model>)` with the effective values when the
   node sets `drive` (`(<model>)` only when a model is set; `--json` `drive`).
   README, SPEC §12.2 and the `owed` skill describe it.
-- **Node-scoped merge CAS (K4; app #14).** In app a 5-minute merge measurement
+- **Node-scoped merge CAS (K4; field report #14).** In the host project a 5-minute merge measurement
   was refused with `Plan, candidate or trunk changed; retry` after two plan
   updates that did not touch the node, and was measured again from scratch.
   After measuring, `owed merge` now compares under the ledger lock only the
@@ -3111,8 +3118,8 @@ unrelated plan update (#14), K5 the repair budget and undelivered rulings (#8,
   reused, an `error` is measured again). Adopt keeps its strict rule.
   `formal/REPORT-mc-owed.md` §9 "0.7 merge CAS" shows the node-scoped CAS stays
   within what the model checks (`merge_guard`, `merge_jobs` in `owed05.rs`).
-- **Repair epoch, rulings to sealed writers, threshold hint (K5; app #8, #9,
-  #11).** In app a parent plan mistake used up the repair budget and a later
+- **Repair epoch, rulings to sealed writers, threshold hint (K5; field report #8, #9,
+  #11).** In the host project a parent plan mistake used up the repair budget and a later
   ruling never reached the halted writer (FLAKY-COLDPLAY #406, QA-REGISTRY
   #427); the parent sent follow-ups by hand. `drive.repairs` now counts the
   attempt's repair sends after the node's epoch: the latest of its dispatch,
@@ -3147,7 +3154,7 @@ unrelated plan update (#14), K5 the repair budget and undelivered rulings (#8,
   halts list each deciding failing observation as `#<obs> <obligation>: <note>`
   (at most 200 characters). SPEC and the skill say: after fixing a plan mistake,
   or to let the writer continue, record a ruling naming the node.
-- **Background measurements (K6; app #13).** In app one 5-minute merge
+- **Background measurements (K6; field report #13).** In the host project one 5-minute merge
   measurement held every other node (16:03-16:09) with Opus 3/12 busy. The
   driver now starts attests (a child process, as before) and merges
   (`ops.merge` in the driver process) and goes on: `decide` gives a node with a
@@ -3250,11 +3257,11 @@ overrule a named block.
 
 ## 0.6.1
 
-The app run of 2026-10-10 reported four driver and planning frictions
+The host project's run of 2026-10-10 reported four driver and planning frictions
 (feedback #4-#7): H1 answers #4 and #5, H2 answers #6 and #7. H3 closes three
 0.6.0 deferrals.
 
-- **Live wakes (H1.1; app #5).** In app the parent read a question from the
+- **Live wakes (H1.1; field report #5).** In the host project the parent read a question from the
   drive log and answered it, but the follower had already handed its wake to pi
   as a follow-up while the agent was busy, so pi delivered the stale wake after
   the answer. The pi extension now tracks the session's agent (`agent_start` …
@@ -3285,7 +3292,7 @@ The app run of 2026-10-10 reported four driver and planning frictions
   message). A failed `sendMessage` keeps the whole batch, revalidated again at
   the next tick. A follower without the pi hooks (the CLI-era `tick`) is
   unchanged.
-- **Staying driver (H1.2; app #4).** In app the driver exited idle after a
+- **Staying driver (H1.2; field report #4).** In the host project the driver exited idle after a
   merge, the parent then added seven ready nodes, and no driver dispatched them.
   `owed drive --stay` (with the loop or `--detach`; a usage error with `--once`,
   `--status` or `--stop`) and `owed_drive` action `start` with `stay: true`
@@ -3309,7 +3316,7 @@ The app run of 2026-10-10 reported four driver and planning frictions
   (`--json`: `idleSince`), and `/owed` and `owed_drive` status show it too.
   Without `--stay` an idle pass exits `idle` as before. SKILL.md recommends
   `stay: true` when the plan will grow.
-- **Ready hint (H1.3; app #4).** After a successful `owed plan` or `owed_plan`,
+- **Ready hint (H1.3; field report #4).** After a successful `owed plan` or `owed_plan`,
   when the new state has nodes the driver would dispatch now (the `dispatch`
   actions of its `decide`: readiness, `drive.max`, writes overlap, owner-needed)
   and no driver holds the repository's lock (a live lock or a lock of another
@@ -3321,7 +3328,7 @@ The app run of 2026-10-10 reported four driver and planning frictions
   the line. Nothing starts automatically, and a failure computing the hint adds
   nothing. The line comes before the H2.2 warnings, which end the plan text
   (SPEC §12.9).
-- **Allowance guidance (H2.1; app #6).** In app two writes questions within 15
+- **Allowance guidance (H2.1; field report #6).** In the host project two writes questions within 15
   minutes each cost a plan version and an owner act. README and the `owed` skill
   gain a planning recipe: keep writes strict by default, and at plan time
   pre-authorize the `writes` prefixes integration and packaging nodes tend to
@@ -3335,7 +3342,7 @@ The app run of 2026-10-10 reported four driver and planning frictions
   writes: ["<new prefixes>"]} in the prior plan would cover this`, the new
   prefixes being those under neither the node's prior writes nor a matching
   prior rule.
-- **Check-less nodes (H2.2; app #7).** In app a milestone node with no check
+- **Check-less nodes (H2.2; field report #7).** In the host project a milestone node with no check
   merged on a review of its evidence, although its writer reported the milestone
   not met. `owed init` and `owed plan` (CLI and pi tools) warn, refusing and
   recording nothing, for each node of the new plan with no checks and no
@@ -3344,7 +3351,7 @@ The app run of 2026-10-10 reported four driver and planning frictions
   says "Milestone": a title is not a contract. The CLI prints the warnings after
   the result; `--json`, `owed_init` and `owed_plan` return `warnings: string[]`
   (empty when there are none).
-- **What an ok review means (H2.3; app #7).** The review packet adds a line
+- **What an ok review means (H2.3; field report #7).** The review packet adds a line
   before the needs-parent instruction: `--ok` means the candidate meets the
   node's goal as its title and brief state it, not only that the writer's report
   or evidence is accurate; if the candidate or the writer's report says the goal
@@ -3364,7 +3371,7 @@ The app run of 2026-10-10 reported four driver and planning frictions
   sampled states, so the walk count stays the bound), the model checker's
   `--timeout` and a wall-clock `timeout` 120 s above it; `a3_compare`, which has
   no state cap of its own, runs under the memory cap and a 3600 s wall clock.
-  Rerun on bench with the caps, no cap stopped any configuration and every
+  Rerun on the bench host with the caps, no cap stopped any configuration and every
   published a3 verdict and state count is unchanged
   (`formal/REPORT-mc-port.md`).
 
@@ -3513,7 +3520,7 @@ entries, which never ease acceptance within the bounds) needs no change.
 **Compatibility.** The ledger format is unchanged: no entry gains a field, so
 pi-owed 0.5.1 can read a ledger written by 0.6.0. G2's recusal can change
 replayed views of existing ledgers: a review by `reviewer:X#n` no longer counts
-once `writer:X#n` exists. Replays of the pi-owed and app ledgers passed `owed
+once `writer:X#n` exists. Replays of the pi-owed and production ledgers passed `owed
 verify`, and their status, report and why outputs were byte-identical with and
 without the recusal change. Replay now refuses an entry by `parent:drive` of a kind the driver never
 writes, and `--as parent:drive` is refused. A subagent's review or evidence from

@@ -298,7 +298,7 @@ function submitBlocks(s: State, node: string): Block[] {
   return n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active' && b.seq > n.slot!.dispatchSeq && b.key === last.facts.keys[b.obligation]);
 }
 /**
- * F4 (app #33c): the needs-parent review blocks the driver halts on until a ruling names the node: on the current
+ * F4 (field report #33c): the needs-parent review blocks the driver halts on until a ruling names the node: on the current
  * candidate's keys (D18), else on the latest submit's (row 8). Empty without an open slot. `owed resume` refuses on them.
  */
 export function unruledBlocks(s: State, node: string): Block[] {
@@ -901,7 +901,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     return stoppedHalt(refused !== undefined ? rejectedHalt(id, 'send', `${rf.send}${callAt(w)}`, refused) : `writer run ${at(writer)} finished ruling follow-up ${rf.send} without submitting a new candidate (${cause})`);
   };
   /**
-   * 0.8 (L3.1, app #21): the ruling follow-up before a halt whatever its cause (owner-needed, row 7, the stalled halt
+   * 0.8 (L3.1, field report #21): the ruling follow-up before a halt whatever its cause (owner-needed, row 7, the stalled halt
    * of a candidate with a failed item, an active block on its keys or a flaky block): the writer is sealed, no reviewer run of the current
    * candidate is unsealed, an undelivered ruling names the node, and no needs-parent review block sits on the keys of
    * the current candidate (else the latest submit), which keeps its D18 route. Sent once (`deliveredRulings`).
@@ -973,7 +973,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       return send(writer, 'follow-up', 'repair', r.message, r.rulings);
     }
     // N1.4: a rebase follow-up only while no submit of this attempt came after the rebase; otherwise a submit that a
-    // later plan entry invalidated gets a submit follow-up naming that plan entry (app #1375).
+    // later plan entry invalidated gets a submit follow-up naming that plan entry (field report #1375).
     const last = lastSubmit(s, id), rebased = !!rb && (!last || last.seq < rb.seq);
     if (rebased && !ar.sends.some(x => x.reason === 'rebase' && x.seq > rb!.seq)) { const m = writerMsg(rebaseMessage(s, id, opts.conflicts?.get(id), opts.rebaseWork?.get(id))); return send(writer, 'follow-up', 'rebase', m.message, m.rulings); }
     if (durableWait) return rulingFirst();

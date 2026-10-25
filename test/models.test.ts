@@ -48,8 +48,8 @@ async function fixture(selected: string, used: string, options: { config?: unkno
 }
 
 test('MD1: nested dsa pool strings and model/afterMs members ignore thinking levels', { timeout: 120_000 }, async () => {
-  const config = { pools: { sol: ['nested', { model: 'gateway/gpt-6.1-sol:high', afterMs: 1000 }], nested: ['proxy/ide/gpt-6.1-sol:high'] } };
-  for (const used of ['proxy/ide/gpt-6.1-sol:low', 'gateway/gpt-6.1-sol:medium']) {
+  const config = { pools: { sol: ['nested', { model: 'openai/gpt-6.1-sol:high', afterMs: 1000 }], nested: ['gateway/ide/gpt-6.1-sol:high'] } };
+  for (const used of ['gateway/ide/gpt-6.1-sol:low', 'openai/gpt-6.1-sol:medium']) {
     const f = await fixture('sol', used, { config });
     try { assert.doesNotMatch(await f.why(['--full']), /differs from|pool membership unknown/); }
     finally { await f.done(); }
@@ -57,15 +57,15 @@ test('MD1: nested dsa pool strings and model/afterMs members ignore thinking lev
 });
 
 test('MD1: direct model thinking differences are quiet, known pool nonmembers still warn', { timeout: 120_000 }, async () => {
-  const direct = await fixture('proxy/ide/gpt-6.1-sol:high', 'proxy/ide/gpt-6.1-sol:low');
+  const direct = await fixture('gateway/ide/gpt-6.1-sol:high', 'gateway/ide/gpt-6.1-sol:low');
   try { assert.doesNotMatch(await direct.why(['--full']), /differs from|pool membership unknown/); } finally { await direct.done(); }
-  const other = await fixture('sol', 'other/model:high', { config: { pools: { sol: ['gateway/gpt-6.1-sol:high'] } } });
+  const other = await fixture('sol', 'other/model:high', { config: { pools: { sol: ['openai/gpt-6.1-sol:high'] } } });
   try { assert.match(await other.why(), /model used other\/model:high differs from the one selected sol/); } finally { await other.done(); }
 });
 
 test('MD1: unknown, missing, malformed and cyclic pool configs are explicit, not mismatch warnings', { timeout: 120_000 }, async () => {
   for (const options of [{}, { raw: '{broken' }, { config: { pools: {} } }, { config: { pools: { sol: ['nested'], nested: ['sol'] } } }]) {
-    const f = await fixture('sol', 'gateway/gpt-6.1-sol:high', options);
+    const f = await fixture('sol', 'openai/gpt-6.1-sol:high', options);
     try {
       const text = await f.why(['--full']);
       assert.match(text, /selected sol \(pool membership unknown\)/);
@@ -75,23 +75,23 @@ test('MD1: unknown, missing, malformed and cyclic pool configs are explicit, not
 });
 
 test('MD1: default HOME config resolves pools when DSA_HOME is unset', { timeout: 120_000 }, async () => {
-  const f = await fixture('sol', 'gateway/gpt-6.1-sol:low', { defaultHome: true, config: { pools: { sol: [{ model: 'gateway/gpt-6.1-sol:high', afterMs: 0 }] } } });
+  const f = await fixture('sol', 'openai/gpt-6.1-sol:low', { defaultHome: true, config: { pools: { sol: [{ model: 'openai/gpt-6.1-sol:high', afterMs: 0 }] } } });
   try { assert.doesNotMatch(await f.why(['--full']), /differs from|pool membership unknown/); } finally { await f.done(); }
 });
 
 for (const same of ['top', 'node'] as const) test(`MD2: ${same} same_model ack is quiet by default, retained in full/JSON, never a gate`, { timeout: 120_000 }, async () => {
-  const f = await fixture('gateway/selected:high', 'gateway/gpt-6.1-sol:high', { same });
+  const f = await fixture('openai/selected:high', 'openai/gpt-6.1-sol:high', { same });
   try {
     assert.doesNotMatch(await f.why(), /Warning: reviewer used the writer's model/);
-    assert.match(await f.why(), /differs from the one selected gateway\/selected:high/);
+    assert.match(await f.why(), /differs from the one selected openai\/selected:high/);
     assert.match(await f.why(['--full']), /Warning: reviewer used the writer's model.*\(acknowledged\)/);
     const card = JSON.parse(await f.why(['--json']));
     assert.equal(card.accepted, true);
     assert.ok(card.modelWarnings.some((w: { message?: string; acknowledged?: boolean }) => w.acknowledged === true && w.message?.includes("reviewer used the writer's model")));
     const commit = (await ops.readState(f)).state.nodes.a!.candidate!.commit;
-    await ops.review({ cwd: f.cwd, as: { role: 'reviewer', id: 'drive-a-1-1' }, node: 'a', verdict: 'block', rank: 1, note: 'behavior needs repair', named: commit, model: 'gateway/gpt-6.1-sol:high' });
+    await ops.review({ cwd: f.cwd, as: { role: 'reviewer', id: 'drive-a-1-1' }, node: 'a', verdict: 'block', rank: 1, note: 'behavior needs repair', named: commit, model: 'openai/gpt-6.1-sol:high' });
     assert.equal(JSON.parse(await f.why(['--json'])).accepted, false, 'ack cannot excuse an independent review block');
-    await ops.review({ cwd: f.cwd, as: { role: 'reviewer', id: 'drive-a-1-1' }, node: 'a', verdict: 'ok', rank: 1, note: 'repair verified', named: commit, model: 'gateway/gpt-6.1-sol:high' });
+    await ops.review({ cwd: f.cwd, as: { role: 'reviewer', id: 'drive-a-1-1' }, node: 'a', verdict: 'ok', rank: 1, note: 'repair verified', named: commit, model: 'openai/gpt-6.1-sol:high' });
     const removed = await ops.planSet({ ...f, as: parent, plan: JSON.stringify({ ...f.p, drive: {}, nodes: f.p.nodes.map(({ drive: _drive, ...n }) => n) }) });
     assert.equal(removed.kind, 'plan');
     assert.ok(removed.kind === 'plan' && !removed.downgrades?.length);
@@ -101,10 +101,10 @@ for (const same of ['top', 'node'] as const) test(`MD2: ${same} same_model ack i
 });
 
 test('MD2: unacknowledged warning remains informational, including thinking-only reviewer differences', { timeout: 120_000 }, async () => {
-  const f = await fixture('gateway/model:high', 'gateway/model:high');
+  const f = await fixture('openai/model:high', 'openai/model:high');
   try {
     const commit = (await ops.readState(f)).state.nodes.a!.candidate!.commit;
-    const review = await cli(f.cwd, ['review', 'a', '--ok', '--rank', '1', '--as', 'reviewer:drive-a-1-1', '--candidate', commit, '--model', 'gateway/model:low']);
+    const review = await cli(f.cwd, ['review', 'a', '--ok', '--rank', '1', '--as', 'reviewer:drive-a-1-1', '--candidate', commit, '--model', 'openai/model:low']);
     assert.equal(review.code, 0, review.stderr);
     assert.match(await f.why(), /Warning: reviewer used the writer's model/);
     assert.equal(JSON.parse(await f.why(['--json'])).accepted, true);

@@ -1,4 +1,4 @@
-// K2 (0.7.0, app #8 part 1, #12 part 2): count notes that say what was counted, the failing note on an exec block's
+// K2 (0.7.0, field report #8 part 1, #12 part 2): count notes that say what was counted, the failing note on an exec block's
 // line in owed why and owed status, and waivers that say what they mean.
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';

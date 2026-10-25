@@ -1,5 +1,5 @@
 #!/bin/bash
-# owed05 ablation table (run on bench from formal/ after building): for each guard, the property it protects on the same
+# owed05 ablation table (run on the bench host from formal/ after building): for each guard, the property it protects on the same
 # configuration with the guard (baseline) and without it (ablated). Mirrors tests/owed05.rs owed05_ablations_flip_a_property.
 # Every run is capped at 8 GB of virtual memory, 20M distinct states and 240 s.
 ulimit -v 8000000

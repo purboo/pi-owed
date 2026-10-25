@@ -44,7 +44,7 @@ async function mergeWith(r: Repo, during: () => Promise<unknown>) {
 }
 const obs = (es: Entry[]) => es.filter(e => e.kind === 'obs');
 
-test('K4.1 app #14: a plan update to another node during a slow merge measurement merges without remeasuring', { timeout: 120_000 }, async () => {
+test('K4.1 field report #14: a plan update to another node during a slow merge measurement merges without remeasuring', { timeout: 120_000 }, async () => {
   const r = await repo();
   try {
     const plan = planOf([inv(r, 'wait', true)]);

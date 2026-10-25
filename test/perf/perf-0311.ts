@@ -1,4 +1,4 @@
-// App-scale operation bench. Run in a disposable repository copy, never the live ledger.
+// Production-scale operation bench. Run in a disposable repository copy, never the live ledger.
 // node --cpu-prof --max-old-space-size=6144 test/perf/perf-0311.ts status|why|submit|digest|outputs <copy> <node> [commit]
 // digest requires a copy with no snapshot and records cold state/output/entry equality artifacts.
 // OWED_PERF_ARTIFACTS=<directory> saves those artifacts; OWED_PERF_TS fixes submit time and rendered ages.

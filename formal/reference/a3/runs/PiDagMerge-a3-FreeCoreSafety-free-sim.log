@@ -3,11 +3,11 @@
 # flags  <deadlock checked> -simulate num=10000 -depth 20 2026-10-08T21:50:38+08:00
 TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
 Running Random Simulation with seed 1154930682895848237 with 4 workers on 20 cores with 910MB heap and 64MB offheap memory [pid: 3459081] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit).
-Parsing file /work/pi-dag/formal/a3/PiDagMerge.tla
-Parsing file /tmp/tlc-5021787520207289610/Naturals.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /tmp/tlc-5021787520207289610/FiniteSets.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /tmp/tlc-5021787520207289610/Sequences.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /tmp/tlc-5021787520207289610/TLC.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /home/user/project/pi-things/pi-dag/formal/a3/PiDagMerge.tla
+Parsing file /tmp/tlc-5021787520207289610/Naturals.tla (jar:file:/home/user/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-5021787520207289610/FiniteSets.tla (jar:file:/home/user/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-5021787520207289610/Sequences.tla (jar:file:/home/user/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-5021787520207289610/TLC.tla (jar:file:/home/user/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets

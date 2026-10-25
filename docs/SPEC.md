@@ -543,7 +543,7 @@ refusal records nothing and leaves the file unchanged. Like `owed plan` (N2), am
 retries a CAS refusal up to 3 attempts while the ledger's plan sha is unchanged;
 each attempt re-reads the ledger and the file, and a failed attempt removes its
 temporary file.
-**Atomic field edits (0.13, ED1–ED3, app §65).**
+**Atomic field edits (0.13, ED1–ED3, field report §65).**
 `owed edit <node[,node...]> --set <path>=<yaml> ... [--unset <path> ...]
 [--node-new] [--rule "<text>" [--writer]]
 [--resume [--after a,b] [--expect report]] --note "<why>"
@@ -6316,7 +6316,7 @@ it gives the reviewer's `owed evidence` command.
   1.0.27): `owed <node>#<attempt> writer` / `owed <node>#<attempt> reviewer <n>`
   (`runName`), next to the labels. A re-launch of a recorded launch sends its
   stored spec bytes unchanged (a launch recorded before 0.5.0 has no name).
-- **Answer in one act (0.13, AN1–AN3, app §65; 0.16 AR, dsa 1.0.38 re-asks).**
+- **Answer in one act (0.13, AN1–AN3, field report §65; 0.16 AR, dsa 1.0.38 re-asks).**
   `owed answer <node> [--qid Q] [--rid R] [--rev N] "<text>"` (pi
   `owed_answer {node, text, qid?, rid?, rev?}`) is a parent or owner act; the driver
   never answers. It describes the writer and reviewer launches of the node's
@@ -6423,7 +6423,7 @@ from launch spec model or array's first entry.
 
 **MD1 (0.20.1):** selected direct models and recorded used models compare by
 `provider/id`, ignoring only the trailing `:thinking`; ids with multiple slashes
-(e.g. `proxy/ide/gpt-6.1-sol`) are preserved. A selected name resolves through
+(e.g. `gateway/ide/gpt-6.1-sol`) are preserved. A selected name resolves through
 dsa `pools` in `$DSA_HOME/config.json`, default
 `~/.pi/durable-subagents/config.json`, including nested pools and
 `{model, afterMs}` entries. Any discovered member, including fallback models,
@@ -7390,7 +7390,7 @@ receipt directly; absence of this status line is not proof of delivery.
 
 ### 12.9 Live wakes, staying driver and ready hint (0.6.1, H1)
 
-- **Live wakes (H1.1).** Cause (app, 2026-10-10): the parent read a question
+- **Live wakes (H1.1).** Cause (field report, 2026-10-10): the parent read a question
   from the drive log and answered it; the follower had already handed its wake
   to pi as a `followUp` while the agent was busy, and pi delivered it after the
   answer. Rules:

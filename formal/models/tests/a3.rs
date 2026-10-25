@@ -1,5 +1,5 @@
 //! a3 ports against the recorded TLC results (formal/reference/a3). Fast configurations only; the big runs
-//! (free MaxLog=3 with 9,305,311 states, long simulations) go through examples/a3_compare.rs and owedmc on bench.
+//! (free MaxLog=3 with 9,305,311 states, long simulations) go through examples/a3_compare.rs and owedmc on the bench host.
 //! Expected numbers are TLC's, read from the copied logs (reference/a3/tlc-runs.tsv) or quoted from the a3
 //! reports; none is taken from owedmc output.
 
@@ -107,7 +107,7 @@ fn a3_reference_exhaustive_runs() {
 }
 
 /// The sampled TLC runs of the current modules, rerun as simulations (TLC's depth; at most 20,000 walks here,
-/// 4,000 for the authority model; the full numbers run on bench): every violation TLC found is found, and no
+/// 4,000 for the authority model; the full numbers run on the bench host): every violation TLC found is found, and no
 /// violation where TLC found none.
 #[test]
 fn a3_reference_simulations() {

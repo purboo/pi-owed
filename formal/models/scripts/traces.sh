@@ -1,5 +1,5 @@
 #!/bin/bash
-# Shortest counterexamples of the findings and witnesses (run on bench from formal/), compact one-line states.
+# Shortest counterexamples of the findings and witnesses (run on the bench host from formal/), compact one-line states.
 # Every run is capped at 8 GB of virtual memory, 20M distinct states and 240 s.
 ulimit -v 8000000
 o() { echo "=== $*"; timeout 300 target/release/owedmc check owed05 --workers 16 --timeout 240 --max-states 20000000 --trace "$@" | grep -vE '^# (engine|flags)'; }

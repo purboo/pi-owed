@@ -1,4 +1,4 @@
-// F3 (0.11, app #34, #12): a waiver with accept_risk reaches the block it names, merge keys included; the merge then
+// F3 (0.11, field report #34, #12): a waiver with accept_risk reaches the block it names, merge keys included; the merge then
 // succeeds on a pass on that key; seqs of another node or obligation are refused; candidate-key waivers are unchanged.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,7 +19,7 @@ const parent = { role: 'parent' as const, id: 'main' };
 
 /**
  * a: check unit reads src/ and fails when src/b exists (b merged first) unless the flag file exists, so its candidate key
- * passes and its merge key fails (an environment-like false fail on a merge key, app #34).
+ * passes and its merge key fails (an environment-like false fail on a merge key, field report #34).
  * b: always passes. c: unit fails until the flag exists (candidate-key flaky), lint always fails. d: always fails.
  */
 const plan = (flag: string) => JSON.stringify({ version: 1, trunk: 'main', closure: [], invariants: [], nodes: [
@@ -61,7 +61,7 @@ async function mergeKeyFail(cwd: string) {
   return { fail: fails[0]!, cand };
 }
 
-test('F3.1/F3.2: a waiver clears a flaky block on a merge key, and the merge then succeeds on the pass there (app #1802/#1816/#1819)', { timeout: 300_000 }, async () => {
+test('F3.1/F3.2: a waiver clears a flaky block on a merge key, and the merge then succeeds on the pass there (field report #1802/#1816/#1819)', { timeout: 300_000 }, async () => {
   const { x, flag } = await fixture(['a', 'b']);
   try {
     const { fail, cand } = await mergeKeyFail(x.cwd);

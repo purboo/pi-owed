@@ -95,7 +95,7 @@ test('SS5 setup symlinks, files and directories are excluded once and never ente
   const command = "ln -s impl node_modules; printf ready > artifact; mkdir -p cache; printf cached > cache/value; mkdir -p viewer; ln -s ../impl viewer/node_modules; printf ignored > already-ignored";
   const r = await fixture({ setup: command });
   try {
-    // A directory-only ignore does not hide a node_modules symlink (the app reproduction).
+    // A directory-only ignore does not hide a node_modules symlink (the field reproduction).
     await commitAt(r.cwd, { '.gitignore': 'node_modules/\nalready-ignored\n', 'viewer/keep': 'tracked' });
     await ops.adopt({ cwd: r.cwd, as: owner, channel: 'delegated', note: 'fixture ignores actual directories only' });
     const exclude = join(r.cwd, '.git', 'info', 'exclude');

@@ -16,7 +16,7 @@ formal/
 
 ## Build and run
 
-Heavy work runs on host `bench` (see `/tmp/owed-bench/README.txt`), e.g.
+Heavy work runs on a remote bench host (see `/tmp/owed-bench/README.txt`), e.g.
 
 ```
 /tmp/owed-bench/run.sh <worktree> 1200 "source ~/.cargo/env; cargo test --offline --release --manifest-path formal/Cargo.toml -p mc"
@@ -42,7 +42,7 @@ owedmc check <model> [--mode M] [--prop P]... [--all] [--const K=V]... [--worker
   usage error.
 
 Attribution: `# engine owedmc <version> (git <describe>, src sha256 <hex>)` is recorded at build time by
-`mc/build.rs`: `git describe --always --dirty --tags` of the checkout the binary was built from (on bench that is the
+`mc/build.rs`: `git describe --always --dirty --tags` of the checkout the binary was built from (on the bench host that is the
 mirror's own commit) and the SHA-256 of the engine sources `mc/src/*.rs` (file name, NUL, length, NUL, contents,
 in name order; the stable attribution of the engine). `sha256` on the `# model` line is the SHA-256 of the
 model's source file as compiled in (`include_str!`).

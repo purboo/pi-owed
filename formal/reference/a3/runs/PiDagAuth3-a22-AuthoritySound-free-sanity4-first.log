@@ -3,12 +3,12 @@
 # flags  <deadlock checked> <exhaustive> 2026-10-08T21:56:34+08:00
 TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
 Running breadth-first search Model-Checking with fp 39 and seed 7074079587101702079 with 4 workers on 20 cores with 2731MB heap and 64MB offheap memory [pid: 3462962] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit, MSBDiskFPSet, DiskStateQueue).
-Parsing file /work/pi-dag/formal/a3/PiDagAuth3.tla
-Parsing file /tmp/tlc-9079011493810846779/Integers.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
-Parsing file /tmp/tlc-9079011493810846779/Sequences.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /tmp/tlc-9079011493810846779/FiniteSets.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /tmp/tlc-9079011493810846779/TLC.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /tmp/tlc-9079011493810846779/Naturals.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /home/user/project/pi-things/pi-dag/formal/a3/PiDagAuth3.tla
+Parsing file /tmp/tlc-9079011493810846779/Integers.tla (jar:file:/home/user/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-9079011493810846779/Sequences.tla (jar:file:/home/user/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-9079011493810846779/FiniteSets.tla (jar:file:/home/user/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-9079011493810846779/TLC.tla (jar:file:/home/user/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-9079011493810846779/Naturals.tla (jar:file:/home/user/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
 Semantic processing of module Naturals
 Semantic processing of module Integers
 Semantic processing of module Sequences

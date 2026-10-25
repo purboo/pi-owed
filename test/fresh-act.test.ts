@@ -1,4 +1,4 @@
-// F1 (0.11, app #35): the driver acts only on a current state. A driver act decided on a state (halt, send, launch,
+// F1 (0.11, field report #35): the driver acts only on a current state. A driver act decided on a state (halt, send, launch,
 // rebase) records nothing when another principal's entry on the node landed after it (code `stale`); a reviewer run that
 // sealed without its verdict gets one `verdict` follow-up before the review-missing halt; the asking notify ends with
 // the ruling hint.
@@ -175,7 +175,7 @@ test('F1.1: a send decided on a stale state is not passed to dsa; the next pass 
   } finally { await f.cleanup(); }
 });
 
-test('F1.1 (app #35): a reviewer that records and seals between load and describe yields no halt; the next pass merges', { timeout: 180_000 }, async () => {
+test('F1.1 (field report #35): a reviewer that records and seals between load and describe yields no halt; the next pass merges', { timeout: 180_000 }, async () => {
   const f = await setup();
   try {
     const { R } = await f.toReviewer();

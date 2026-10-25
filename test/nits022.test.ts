@@ -144,7 +144,8 @@ test('NT models: nested pool edges, empty/partial cycles and thinking suffixes s
   } finally {if(prior===undefined) delete process.env.DSA_HOME;else process.env.DSA_HOME=prior;await r.cleanup();}
 });
 
-// The original ledger and blob bytes, copied through the first merge; no timestamps, paths or hashes regenerated.
+// The original ledger and blob bytes, copied through the first merge; no timestamps regenerated. One worktree path was
+// neutralised (0.33.1), so the chain hashes from seq 4 on, the head and the state digest were recomputed from those bytes.
 test('NT replay: real repository 0.20 ledger prefix verifies and full/incremental replay reaches a fixed snapshot', async () => {
   const f=JSON.parse(await readFile(new URL('./fixtures/real-020-ledger.json',import.meta.url),'utf8')) as {entries:Entry[];plans:Record<string,string>};
   assert.deepEqual(verifyChain(f.entries),{ok:true});
@@ -155,7 +156,7 @@ test('NT replay: real repository 0.20 ledger prefix verifies and full/incrementa
   for(const e of f.entries.slice(1)) inc=R.reduceFrom(inc,[e],lookup);
   assert.equal(R.sameReplay(inc,full),true);
   assert.deepEqual({seq:full.seq,head:full.head,trunk:full.trunk.commit,merged:Object.values(full.nodes).filter(n=>n.merged).map(n=>n.id),ready:(await import('../src/views.ts')).statusView(full).ready},
-    {seq:12,head:'7bc18704699de17ffaa4be88eb5606bc1e0b6cf3e71b5bc8ea9c044e4a8ff9a2',trunk:'3f662bf0fba7ef26112761baeb85e2eee8527cbc',merged:['english'],ready:['brief','escape','gc','strength']});
+    {seq:12,head:'4b1f2a6283d19994f346c13395e58208b3a62f8ec1359a22dc4d71e7674e7658',trunk:'3f662bf0fba7ef26112761baeb85e2eee8527cbc',merged:['english'],ready:['brief','escape','gc','strength']});
 });
 
 test('NT mtrain #2270: batch fail cannot carry remeasure metadata or supply the single-merge first failure hint', {timeout:180_000}, async () => {

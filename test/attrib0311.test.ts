@@ -51,7 +51,7 @@ for (const [path, esm, message] of [
   ['evidence/FIX-M1-F-ORIGIN/verify.mjs', false, 'product moved since the measured row: re-measure required'],
   ['evidence/PROGRESS-ROW-SETTLE/real-row.mjs', false, 'AssertionError [ERR_ASSERTION]: row did not settle'],
   ['evidence/PROGRESS-ROW-SETTLE/real-row.mjs', true, 'AssertionError [ERR_ASSERTION]: row did not settle'],
-] as const) test(`PA1: app ${path} ${esm ? 'ESM' : 'CJS'} is inapplicable, never trunk-red`, async () => {
+] as const) test(`PA1: field ${path} ${esm ? 'ESM' : 'CJS'} is inapplicable, never trunk-red`, async () => {
   const diagnostic = esm
     ? `printf "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '%s/${path}' imported from %s/entry.mjs\\n" "$OWED_TREE" "$OWED_TREE"`
     : `printf "Error: Cannot find module '%s/${path}'\\n  code: 'MODULE_NOT_FOUND'\\n" "$OWED_TREE"`;

@@ -715,7 +715,7 @@ export function waiverText(s: State, e: WaiveEntry): string {
   return `waived ${o} for candidate #${c?.seq ?? '?'} ${c?.commit.slice(0, 12) ?? '?'} (key ${k}): ${effect}; ${scope}; ${again}${unmeasured}${flaky.map(seq => `; the flaky block #${seq} stays recorded as accepted risk`).join('')}${acceptedText(s, e, !!unmeasured)}`;
 }
 /**
- * 0.11 F3 (app #34, #12): what --accept-risk does, said plainly: the cited blocks are cleared whatever their key, the
+ * 0.11 F3 (field report #34, #12): what --accept-risk does, said plainly: the cited blocks are cleared whatever their key, the
  * obligation is no longer measured on the waived key, and a cited fail on a merge key no longer counts against the merge.
  */
 function acceptedText(s: State, e: WaiveEntry, unmeasured: boolean): string {

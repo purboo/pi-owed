@@ -142,7 +142,7 @@ test('H1.1a-c pi: a question read while the agent runs is held; answered before 
       line(askLine('a', 'rid-a', q!, 'a: writer run rid-a asks (qid q1-1, rev 1): which db?'));
       await sleepMs(2600);   // more than one follower interval (2 s)
       assert.equal(h.messages.length, 0, 'held while the agent runs');
-      // The parent answers from the log (as in app 03:46:48Z), before the session settles.
+      // The parent answers from the log (as in a field report, 03:46:48Z), before the session settles.
       const ans = await f.dsa.send('ans-1', 'rid-a', 'answer', 'postgres', { qid: q!.qid, rev: q!.rev });
       assert.equal(ans.outcome, 'applied');
       await h.emit('agent_settled', { aborted: false });

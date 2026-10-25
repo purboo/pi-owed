@@ -1,4 +1,4 @@
-// L2 (0.8.0, app #19, #20): a plan entry that changes or removes a check's definition supersedes the execution blocks
+// L2 (0.8.0, field report #19, #20): a plan entry that changes or removes a check's definition supersedes the execution blocks
 // recorded under the old definition; they no longer block, get no attribution rerun and need no waiver.
 import test from 'node:test';
 import assert from 'node:assert/strict';

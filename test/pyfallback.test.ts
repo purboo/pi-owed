@@ -8,7 +8,7 @@ import { parseCounts, runJob, zeroTestFallbackLine, zeroTestFallbackSignature } 
 import { setupHint, setupSignature } from '../src/remeasure-on.ts';
 import type { AttestJob, Counts } from '../src/types.ts';
 
-const APP = 'run 1: PASS\nrun 2: PASS\nrun 3: PASS\n3/3 passing runs\nENOTEMPTY=0 failed=[]';
+const FIELD = 'run 1: PASS\nrun 2: PASS\nrun 3: PASS\n3/3 passing runs\nENOTEMPTY=0 failed=[]';
 let r: Awaited<ReturnType<typeof repo>>, ctx: Parameters<typeof runJob>[0], job: AttestJob;
 before(async () => {
   r = await repo();
@@ -24,18 +24,18 @@ const run = (log: string, min_tests?: number, code = 0) => runJob(ctx, {
 });
 
 // Keep each changed consequence independent so the red records all required failure paths.
-test('PF1 app: ENOTEMPTY=0 failed=[] is not a pytest summary', () => {
-  assert.equal(parseCounts(APP), undefined);
+test('PF1 field: ENOTEMPTY=0 failed=[] is not a pytest summary', () => {
+  assert.equal(parseCounts(FIELD), undefined);
 });
-test('PF3 app: exit 0 without min_tests passes, never a zero-test failure', async () => {
-  const obs = await run(APP);
+test('PF3 field: exit 0 without min_tests passes, never a zero-test failure', async () => {
+  const obs = await run(FIELD);
   assert.equal(obs.exit, 0);
   assert.equal(obs.verdict, 'pass', obs.note);
   assert.equal(obs.counts, undefined);
   assert.equal(obs.note, undefined);
 });
-test('PF3 app: exit 0 with min_tests is unknown-format error, never a zero-test failure', async () => {
-  const obs = await run(APP, 3);
+test('PF3 field: exit 0 with min_tests is unknown-format error, never a zero-test failure', async () => {
+  const obs = await run(FIELD, 3);
   assert.equal(obs.exit, 0);
   assert.equal(obs.verdict, 'error', obs.note);
   assert.equal(obs.counts, undefined);

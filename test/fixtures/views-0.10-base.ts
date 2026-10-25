@@ -318,7 +318,7 @@ function manualText(i: ItemView & { observations?: Entry[] }): string {
  */
 export const resumeCommands = (node = '<node>'): string => `owed resume ${node} --note "<why>" (add --after <node> to wait until that node merges); owed rule gives the writer and reviewers guidance they must acknowledge`;
 /**
- * 0.8 (L3.2, app #21): offered wherever owed tells the owner what to do about a flaky block, next to the waiver: when the
+ * 0.8 (L3.2, field report #21): offered wherever owed tells the owner what to do about a flaky block, next to the waiver: when the
  * check or test itself must change, a ruling sends the writer to fix it.
  */
 export const flakyRuleHint = (node: string): string => `or owed rule "<what the writer must change>" --nodes ${node} when the check or test itself must change (the writer fixes it; the block stays flaky until a plan change of the check's definition supersedes it, or the owner waives it once the fixed candidate passes)`;

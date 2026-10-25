@@ -1,6 +1,6 @@
 // K5 (0.7): the repair budget counts repairs since the node's epoch (the latest ruling naming it, or plan entry that
 // changed its spec); a ruling reaches a sealed writer as a `ruling` follow-up; the same count below min_tests twice
-// halts for the parent; halt texts cite the failing observations. Timelines from app (FLAKY-COLDPLAY, QA-REGISTRY).
+// halts for the parent; halt texts cite the failing observations. Timelines from field reports (FLAKY-COLDPLAY, QA-REGISTRY).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sha256 } from '../src/canon.ts';

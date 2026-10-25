@@ -109,7 +109,7 @@ function dependentCounts(plan: Plan): Map<string, number> {
   return out;
 }
 /**
- * 0.11 F3 (app #34): a failing merge-result observation of a node (`merging`) whose block an owner waiver cites in its
+ * 0.11 F3 (field report #34): a failing merge-result observation of a node (`merging`) whose block an owner waiver cites in its
  * `accept_risk` no longer counts for its (merge) key: it is neither a conflicting fail nor a verdict, so a pass on that
  * key satisfies the merge and a key left without another verdict is measured again. An observation on the waiver's own
  * key (a candidate key, or a merge key equal to it) is never discounted: the waiver works there through W as before.
@@ -490,7 +490,7 @@ function refresh(s: State, dirty: Set<string> | 'all' = 'all'): void {
     n.dependents = h.dependents.get(n.id) ?? 0;
     if (n.halt && (!n.slot?.open || n.slot.attempt !== n.halt.attempt)) n.halt = undefined;
   }
-  // F4 (app #27): a node in the state but not in the current plan and not merged is `removed`, never ready.
+  // F4 (field report #27): a node in the state but not in the current plan and not merged is `removed`, never ready.
   for (const id of dirty === 'all' ? Object.keys(s.nodes) : dirty) {
     const n = s.nodes[id];
     if (n && !nodeSpec(s, id)) { n.phase = n.merged ? 'merged' : 'removed'; delete n.held; if (!n.candidate) delete n.acceptedSince; }

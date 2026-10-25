@@ -45,7 +45,7 @@ test('plan: worktrees block and node type parse; bad keys, types and templates a
 });
 
 /** Main worktree on `work` (modified tracked + untracked file); trunk `dev` in a linked worktree outside it; slots under <root>/slots. */
-async function app(opts: { type?: string } = {}) {
+async function hostRepo(opts: { type?: string } = {}) {
   const r = await repo();
   await seed(r.cwd);
   const dev = join(r.root, 'dev-wt'), slots = join(r.root, 'outside', 'slots');
@@ -64,7 +64,7 @@ async function app(opts: { type?: string } = {}) {
 }
 
 test('D19.6 acceptance: outside root, templated branch, trunk in a linked worktree; main worktree untouched end to end', { timeout: 180_000 }, async () => {
-  const { r, dev, slots, plan, snapshot } = await app();
+  const { r, dev, slots, plan, snapshot } = await hostRepo();
   try {
     const before = await snapshot();
     assert.ok(before.status.includes('test/b.cjs') && before.status.includes('notes.txt'), 'fixture: main worktree is dirty');
@@ -97,7 +97,7 @@ test('D19.6 acceptance: outside root, templated branch, trunk in a linked worktr
 });
 
 test('D19.5: a dirty trunk worktree makes merge refuse with the remedy, trunk unchanged', { timeout: 180_000 }, async () => {
-  const { r, dev, plan } = await app();
+  const { r, dev, plan } = await hostRepo();
   try {
     await call(r.cwd, ['init', plan, '--i-am-owner']);
     const a = await call<DispatchPacket>(r.cwd, ['dispatch', 'a']);

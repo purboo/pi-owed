@@ -16,8 +16,8 @@ The following locations identify the existing tests before this change. Only WK1
 
 - `test/confirm-timeout.test.ts:277`: the delegated tool receipt previously ended its first line at “debt recorded”; WK3 now requires the candidate key. Delegated authority and no-dialog assertions stay unchanged.
 - `test/halt-detail.test.ts:117`: the unmeasured-key tool receipt previously omitted the key; WK3 adds the candidate key. The meaning and later-measurement assertions stay unchanged.
-- `test/app027.test.ts:222`: the held-risk CLI receipt previously placed accepted risk immediately after “debt recorded”; WK3 inserts the candidate key. Held-risk acceptance and compact output remain checked.
-- `test/app027.test.ts:236`: the full call previously recorded another act because the initial waiver used the candidate key. Under WK1 it is now an exact merge-key retry: the test checks its original receipt and no append, and checks full receipt output on a fresh fixture.
+- `test/field027.test.ts:222`: the held-risk CLI receipt previously placed accepted risk immediately after “debt recorded”; WK3 inserts the candidate key. Held-risk acceptance and compact output remain checked.
+- `test/field027.test.ts:236`: the full call previously recorded another act because the initial waiver used the candidate key. Under WK1 it is now an exact merge-key retry: the test checks its original receipt and no append, and checks full receipt output on a fresh fixture.
 - `test/waive-key.test.ts:64`: the flaky merge-risk waiver previously recorded the candidate key; WK1 records the current merge key. Block clearance, acceptance and merge reuse assertions stay unchanged.
 - `test/waive-key.test.ts:89`: the merge previously measured the waived merge key again and passed; WK1 now merges without another measurement.
 - `test/waive-key.test.ts:102`: the old fixture expected a new failure on the already covered merge key. WK1 now covers that key, so the fixture changes candidate reads and proves a different merge key is measured, fails and creates a new active block; no false acceptance is allowed.

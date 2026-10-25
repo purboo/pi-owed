@@ -362,7 +362,7 @@ export const evidenceCommand = (node: string, id: string, as: string, candidate?
 /** DC4: one decision gives acknowledged guidance and releases the halt; no-resume preserves it. */
 export function resumeCommands(node = '<node>'): string { return `owed decide ${node} --text "<decision>" (add --after <node> to wait until that node merges; --no-resume keeps it halted)`; }
 /**
- * 0.8 (L3.2, app #21): offered wherever owed tells the owner what to do about a flaky block, next to the waiver: when the
+ * 0.8 (L3.2, field report #21): offered wherever owed tells the owner what to do about a flaky block, next to the waiver: when the
  * check or test itself must change, a ruling sends the writer to fix it.
  */
 export const flakyRuleHint = (node: string): string => `or owed decide ${node} --writer --text "<what the writer must change>" when the check or test itself must change (the writer fixes it; the block stays flaky until a plan change of the check's definition supersedes it, or the owner waives it once the fixed candidate passes)`;

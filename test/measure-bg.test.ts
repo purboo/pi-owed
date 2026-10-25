@@ -1,4 +1,4 @@
-// 0.7.0 K6 (app #13): attests and merges run in the background while the driver serves other nodes; `drive.measure`
+// 0.7.0 K6 (field report #13): attests and merges run in the background while the driver serves other nodes; `drive.measure`
 // caps them, one merge at a time; stop waits, stop-now aborts, --once waits; exit 75 of owed attest is busy; a restarted
 // driver retries the attest a dead driver's child still runs; `owed drive --status` lists the in-flight measurements.
 import { clockTime } from '../src/clock.ts';
@@ -98,7 +98,7 @@ const started = (lines: Line[], what: 'attest' | 'merge', id?: string) => lines.
 const merged = (es: Entry[], id: string) => es.some(e => e.kind === 'merge' && e.node === id);
 const halts = (es: Entry[]) => es.filter(e => e.kind === 'halt');
 
-test('K6 app #13: while node a merge measures (slow invariant), node b is dispatched and its writer launched; status lists the merge', { timeout: 240_000 }, async () => {
+test('K6 field report #13: while node a merge measures (slow invariant), node b is dispatched and its writer launched; status lists the merge', { timeout: 240_000 }, async () => {
   const v1 = (path: (n: string) => string) => ({ ...planOf(node('a')), invariants: [{ id: 'slow', run: `if [ -f a.txt ]; then ${gated(path('inv'), path('gate'))}; fi; true`, reads: ['a.txt'] }] });
   const f = await rig(v1);
   const f0 = { mark: f.path('inv'), gate: f.path('gate') };

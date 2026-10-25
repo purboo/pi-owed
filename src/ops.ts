@@ -323,7 +323,7 @@ async function mutate(o: Actor, make: (s: State) => Draft | Promise<Draft>, fres
 /** F1: whether ledger entry `e` names `node`: its `node` or `subject`, a ruling listing it or `*`, or any plan entry. */
 const namesNode = (e: Entry, node: string): boolean => e.kind === 'plan' || (e.kind === 'rule' ? e.nodes === '*' || e.nodes.includes(node) : ('node' in e && e.node === node) || ('subject' in e && e.subject === node));
 /**
- * F1 (0.11, app #35): a driver act decided on the state of seq `since` (halt, send, launch, rebase) records nothing
+ * F1 (0.11, field report #35): a driver act decided on the state of seq `since` (halt, send, launch, rebase) records nothing
  * when an entry after `since` names the node and was not written by the driver (`parent:drive`): it throws OwedError
  * code `stale` and the next pass decides again. Called under the ledger lock, before the append; no check without `since`.
  */
@@ -867,7 +867,7 @@ export async function carriedBy(o: Context & { plan: number }): Promise<SubmitEn
   }
   return out;
 }
-// ---------- N3: owed amend, widen one node's writes (app #26) ----------
+// ---------- N3: owed amend, widen one node's writes (field report #26) ----------
 /** N3: what `owed amend` would write: the plan file edited with the node's new writes (nothing recorded yet). */
 export interface AmendEdit {
   node: string;

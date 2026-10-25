@@ -1,5 +1,5 @@
 //! Compare the ports with the recorded TLC runs (formal/reference/a3/tlc-runs.tsv, made by extract.py from the
-//! copied logs). Used by tests/a3.rs (fast rows) and examples/a3_compare.rs (every row, on bench).
+//! copied logs). Used by tests/a3.rs (fast rows) and examples/a3_compare.rs (every row, on the bench host).
 //!
 //! Acceptance per exhaustive row (REPORT-mc-port.md):
 //! - TLC HOLDS: owedmc HOLDS (deadlock checked) with the same distinct states and depth (TLC prints the

@@ -79,13 +79,13 @@
       "attempt": 1,
       "base": "c515df9283da0b5b40c5d582e3d809b441a3e3b6",
       "branch": "owed/english/1",
-      "worktree": "/work/pi-owed/.owed/wt/english-1",
+      "worktree": "/home/user/project/pi-things/pi-owed/.owed/wt/english-1",
       "packet": "b8282c58e9189ede5f99df85b708b0df703fe4a437e4010a336e35f884dd8284",
       "rulings_seen": -1,
       "seq": 4,
       "ts": "2026-10-08T23:54:12.675Z",
       "prev": "5e7f386b3eda9bf384391fc8d8ca85df3c6dbbadb90bea20f85a0669a7e88ef5",
-      "hash": "0a59f4656cf08eb4e694dc6354649fcdbc63b1df42afd8ffcecac7f6deea498a"
+      "hash": "4ce17d51a0702d11c6cf46a108cdebfec9fb63435a46e0f32cf59da477e2a6d0"
     },
     {
       "kind": "submit",
@@ -122,8 +122,8 @@
       },
       "seq": 5,
       "ts": "2026-10-09T00:00:21.798Z",
-      "prev": "0a59f4656cf08eb4e694dc6354649fcdbc63b1df42afd8ffcecac7f6deea498a",
-      "hash": "2c00b1e1fa43e93aa47d0b7160ee4ff7e50d8a287eb2ca1aa9b98ea07b358cbd"
+      "prev": "4ce17d51a0702d11c6cf46a108cdebfec9fb63435a46e0f32cf59da477e2a6d0",
+      "hash": "c6022ccdf774e80675027eab213b0d356fdc27346d9d06c7f6137bb1de05f971"
     },
     {
       "kind": "obs",
@@ -146,8 +146,8 @@
       "log": "4d9d8c054a12a88c07e3a345eb16c6e98e13e0ead9a67d998d3008c41bd96e96",
       "seq": 6,
       "ts": "2026-10-09T00:00:49.859Z",
-      "prev": "2c00b1e1fa43e93aa47d0b7160ee4ff7e50d8a287eb2ca1aa9b98ea07b358cbd",
-      "hash": "9d13856b252d416b690e451ac3eb52cb896eb63957560312d262a4b2a9bc7718"
+      "prev": "c6022ccdf774e80675027eab213b0d356fdc27346d9d06c7f6137bb1de05f971",
+      "hash": "719392f5b31b7d8eb993b646ea137980ee1bf83effa6ab66fcff334820a77023"
     },
     {
       "kind": "obs",
@@ -170,8 +170,8 @@
       "log": "946103134acd1fccf1a2b05067291a9bf4e2b1ea2c67501500f12228eb00452c",
       "seq": 7,
       "ts": "2026-10-09T00:00:50.503Z",
-      "prev": "9d13856b252d416b690e451ac3eb52cb896eb63957560312d262a4b2a9bc7718",
-      "hash": "6c7a2c883d9debba1dba0ec1d0d72fe579ce8949f87bacb2dacd955ee399a174"
+      "prev": "719392f5b31b7d8eb993b646ea137980ee1bf83effa6ab66fcff334820a77023",
+      "hash": "c49f9ed9fd23249a32bd4093de18259ec7246dce4e0446b7f38e577638230429"
     },
     {
       "kind": "obs",
@@ -188,8 +188,8 @@
       "log": "a66fb5f390cd7c3feb625f8b4f012ae69ee11a194129a40d82f962e3a337b6c2",
       "seq": 8,
       "ts": "2026-10-09T00:00:50.521Z",
-      "prev": "6c7a2c883d9debba1dba0ec1d0d72fe579ce8949f87bacb2dacd955ee399a174",
-      "hash": "0274c0186f6fee57760d93c8d9d748324e345354079d6686353cb20da5bdac56"
+      "prev": "c49f9ed9fd23249a32bd4093de18259ec7246dce4e0446b7f38e577638230429",
+      "hash": "d9167da5be0015843ef6c15185e0e4874f3b4ebf535ed37aee423ba3543c161e"
     },
     {
       "kind": "review",
@@ -203,8 +203,8 @@
       "note": "Reviewed git diff c515df9..f1520f6. AST comparison of src/{cli,ops,reducer,views,extension,types}.ts with string literals masked shows only string/join-separator changes, except views.ts itemText now always prints the label (old '封' special case removed; ⛔ blocked is rendered) - display only. Mark '⛔' appears only in the ItemView view type; it is not persisted in the ledger. Entry kinds, fields, key formulas, validation conditions, exit codes and the packet's use in keys are unchanged. SKILL.md/SPEC.md translations faithfully keep the rules: same-rank different reviewer cannot clear, owner-only waive/defer/downgrade, defer is debt not a pass, invariants cannot be waived, execution-attribution semantics. The updated assertions in cli/extension/reducer tests are equivalent in strength (Attribution is slightly stricter; Merges and defer were already loose on base). english.test.ts drives real CLI and extension paths, including refusals, owner confirmation prompts and doc scans. Ran in a detached worktree: tsc --noEmit exit 0; node --test english/cli/extension/reducer 31/31 pass. Non-blocking: missing space after colon at src/cli.ts:55 (failed:), src/ops.ts:123 (accepted:), src/reducer.ts:345 (unsatisfied:); reducer downgradeDetails wording still differs from plan.ts planDowngrades (pre-existing), so downgrade lists may show duplicates; english.test.ts does not scan bin/ or dev/plan.yaml (dev/plan.yaml still has CJK but is not user-facing).",
       "seq": 9,
       "ts": "2026-10-09T00:03:49.363Z",
-      "prev": "0274c0186f6fee57760d93c8d9d748324e345354079d6686353cb20da5bdac56",
-      "hash": "9a6371b347d473eee31259b2c7c67906b13a0de3910f35dbc666b90050000119"
+      "prev": "d9167da5be0015843ef6c15185e0e4874f3b4ebf535ed37aee423ba3543c161e",
+      "hash": "11a50a01493279c31569e5ced754ee326015235e330f36057b8de91e0238dca5"
     },
     {
       "kind": "obs",
@@ -220,8 +220,8 @@
       "log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "seq": 10,
       "ts": "2026-10-09T00:04:34.371Z",
-      "prev": "9a6371b347d473eee31259b2c7c67906b13a0de3910f35dbc666b90050000119",
-      "hash": "e595e33b9152485179377dec557e8e2c6daec30c7c31cf025fe0bb1408be5894"
+      "prev": "11a50a01493279c31569e5ced754ee326015235e330f36057b8de91e0238dca5",
+      "hash": "2ab9fa768c3b4fa269b6e8c33564a8623991a87a0ac1eb1139062bde45fffaf3"
     },
     {
       "kind": "obs",
@@ -244,8 +244,8 @@
       "log": "85b4f0d223b7455626b6131d47ca8ff818687954173ead12a3a86b34d992bfb2",
       "seq": 11,
       "ts": "2026-10-09T00:04:34.371Z",
-      "prev": "e595e33b9152485179377dec557e8e2c6daec30c7c31cf025fe0bb1408be5894",
-      "hash": "eb704478278fc4247dfd0c39d0e1c486b5a1533a793be12cbb4f663e833a24b5"
+      "prev": "2ab9fa768c3b4fa269b6e8c33564a8623991a87a0ac1eb1139062bde45fffaf3",
+      "hash": "fe82ddfa8a7c2edf23593b041004cde2d9d9f8a625f89f400fcf2717582bc75e"
     },
     {
       "kind": "merge",
@@ -292,8 +292,8 @@
       },
       "seq": 12,
       "ts": "2026-10-09T00:04:34.371Z",
-      "prev": "eb704478278fc4247dfd0c39d0e1c486b5a1533a793be12cbb4f663e833a24b5",
-      "hash": "7bc18704699de17ffaa4be88eb5606bc1e0b6cf3e71b5bc8ea9c044e4a8ff9a2"
+      "prev": "fe82ddfa8a7c2edf23593b041004cde2d9d9f8a625f89f400fcf2717582bc75e",
+      "hash": "4b1f2a6283d19994f346c13395e58208b3a62f8ec1359a22dc4d71e7674e7658"
     }
   ],
   "plans": {

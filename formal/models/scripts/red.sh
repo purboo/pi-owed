@@ -1,5 +1,5 @@
 #!/bin/bash
-# Cargo variant of /tmp/owed-bench/red.sh: base tree + candidate test files, run the plan's check command on bench.
+# Cargo variant of /tmp/owed-bench/red.sh: base tree + candidate test files, run the plan's check command on the bench host.
 # The remote cargo run is capped at 8 GB of virtual memory (ulimit -v) and the given timeout.
 set -uo pipefail
 WT=$(cd "$1" && pwd); BASE=$2; T=$3; EXP=$4; shift 4

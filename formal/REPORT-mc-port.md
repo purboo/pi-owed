@@ -23,8 +23,8 @@ search. No porting error remained after the first full comparison; the one count
 | `models/tests/a3.rs` | 6 tests (`cargo test -p models -- a3`) |
 | `reference/a3/` | copies: both modules (current), `PiDagAuth3-32122309.tla` (the module of the accepted scenario round, from pi-dag cb02d51), CONTRACT.md, REPORT-auth.md, REPORT-merge.md, check.sh, `runs/` (all 253 PiDagAuth3/PiDagMerge cfg+log pairs, results TSVs) |
 | `reference/a3/extract.py`, `tlc-runs.tsv` | one row per TLC run from the logs: module sha, mode, consts, property, workers, result, distinct, generated, depth, trace length, simulation size, class |
-| `results/a3-compare.tsv` | the full comparison (187 rows) from the bench run below |
-| `run-a3-big.sh` | the big runs (bench) |
+| `results/a3-compare.tsv` | the full comparison (187 rows) from the bench-host run below |
+| `run-a3-big.sh` | the big runs (bench host) |
 | `mc/` | engine follow-ups (below) |
 
 ## How the reference rows are classified (`class` in tlc-runs.tsv)
@@ -66,12 +66,12 @@ search. No porting error remained after the first full comparison; the one count
 
 ## Results (ours vs TLC)
 
-Big runs on bench, 16 workers, `run-a3-big.sh`, log `/tmp/owed-bench/logs/mc-port-1-101520.log` (engine src sha256
+Big runs on the bench host, 16 workers, `run-a3-big.sh`, log `/tmp/owed-bench/logs/mc-port-1-101520.log` (engine src sha256
 `08433a0b…`, a3_auth `3852e495…`, a3_merge `2e56852c…`).
 
 Since 0.6.1 `run-a3-big.sh` caps every run like `models/scripts/owed05-big.sh`: `ulimit -v 8000000`, explicit state
 caps (exhaustive `--max-states 22000000`; simulations 2e9 sampled states, so the walk count stays the bound), the
-model checker's `--timeout` and a wall-clock `timeout` 120 s above it (a3_compare: 3600 s). Rerun on bench with the
+model checker's `--timeout` and a wall-clock `timeout` 120 s above it (a3_compare: 3600 s). Rerun on the bench host with the
 caps (log `/tmp/owed-bench/logs/fixes-061-1-120655.log`): no cap stops any configuration; every verdict and state
 count in the table below is unchanged (MaxLog=3 exhaustive 10.2 s, 1.7 GB RSS; a3_compare 172 s, 3.1 GB RSS,
 187 OK, 0 FAIL, 59 skipped, `results/a3-compare.tsv` identical except the seconds column).
@@ -172,7 +172,7 @@ capped at 20,000 / 4,000), `a3_merge_live_queue_liveness`, `a3_ports_determinist
   (mean length 12 of 20 in the merge runs); owedmc's walks take every step (explicit stutters such as `Terminal`,
   `FFinished` included), reporting states visited. Seeds differ from TLC's; verdicts are what is compared.
 - `tlc_branches`/`tlc_order` exist only to reproduce TLC's bookkeeping; no verdict depends on them.
-- The engine's `# engine` git describe on bench is the mirror's sync commit; the engine source sha256 is the stable
+- The engine's `# engine` git describe on the bench host is the mirror's sync commit; the engine source sha256 is the stable
   attribution.
 
 ## Not done

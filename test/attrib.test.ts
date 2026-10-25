@@ -34,7 +34,7 @@ async function refusal(cwd: string, node = 'a'): Promise<string> {
 }
 
 /**
- * app 2026-10-14 15:2x: trunk changed an API (lib v1 → v2) after the slot base; the candidate's call site and its new
+ * field report 2026-10-14 15:2x: trunk changed an API (lib v1 → v2) after the slot base; the candidate's call site and its new
  * test only work with v1. inv:build passes on trunk and fails on the merge tree; check:own fails on trunk by design.
  */
 async function breakFixture(tests: string[] | undefined) {
@@ -186,7 +186,7 @@ test('AT4/SG2: known intermittent needs matching same-key pass/fail, never trunk
 });
 
 /**
- * app 2026-10-13 20:2x (RG-OFF): trunk fails `old bug` (complete, named), trunk then moves outside the invariant's
+ * field report 2026-10-13 20:2x (RG-OFF): trunk fails `old bug` (complete, named), trunk then moves outside the invariant's
  * reads, so the merge cannot inherit the trunk failure (its trunk observation is from an older commit): the owner
  * defers the merge key; the writer resubmits, which changes the merge key.
  */

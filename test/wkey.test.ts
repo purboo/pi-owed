@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { access, cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import * as ops from '../src/ops.ts';
 import * as git from '../src/git.ts';
@@ -252,7 +252,7 @@ async function compareEvery(entries:Entry[], lookup:(sha:string) => Plan, baseli
   assert.ok(reducer.sameReplay(snap,current),'snapshot replay identity');
 }
 
-test('WK2: restricted validation accepts the app shape and preserves every old mixed/equal/different-key and recorded-ledger prefix', async t => {
+test('WK2: restricted validation accepts the field shape and preserves every old mixed/equal/different-key and recorded-ledger prefix', async t => {
   const base = await frozenBaseline();
   try {
     const fresh = synthetic(); fresh.submit('candidate'); fresh.obs('candidate',false,'pass'); const merge = fresh.obs('merge');
@@ -273,8 +273,8 @@ test('WK2: restricted validation accepts the app shape and preserves every old m
     uncited.add(uncited.waive('merge',[cited]));
     assert.equal(uncited.state().nodes.a!.blocks.find(b => b.seq === retained)!.state,'active','same-obligation uncited risk remains binding');
     assert.equal(uncited.state().nodes.a!.accepted,false);
-    const oldApp = synthetic(); oldApp.submit('candidate'); oldApp.obs('candidate',false,'pass'); const risk = oldApp.obs('merge'); oldApp.add(oldApp.waive('candidate',[risk])); await compareEvery(oldApp.entries,oldApp.lookup,base.baseline);
-    const source = '/work/pi-owed/.git/owed';
+    const oldField = synthetic(); oldField.submit('candidate'); oldField.obs('candidate',false,'pass'); const risk = oldField.obs('merge'); oldField.add(oldField.waive('candidate',[risk])); await compareEvery(oldField.entries,oldField.lookup,base.baseline);
+    const source = join(homedir(), 'project/pi-things/pi-owed/.git/owed');
     let unavailable:string | undefined;
     try { await access(join(source,'ledger.jsonl')); await access(join(source,'blobs')); } catch { unavailable = 'owed repository ledger and blobs are unavailable on this test host'; }
     if (unavailable) { t.diagnostic(`SKIP recorded owed replay: ${unavailable}`); return; }

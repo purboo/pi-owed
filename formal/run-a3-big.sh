@@ -1,5 +1,5 @@
 #!/bin/bash
-# The big a3 runs of REPORT-mc-port.md (run on bench from formal/: bash run-a3-big.sh). Each command is bounded.
+# The big a3 runs of REPORT-mc-port.md (run on the bench host from formal/: bash run-a3-big.sh). Each command is bounded.
 # Like models/scripts/owed05-big.sh, every run is capped so the shared host never swaps: 8 GB of virtual memory
 # (ulimit -v 8000000), an explicit state cap (exhaustive runs: MS, default 22M distinct states, more than twice the
 # largest run here, 9.3M states at 1.7 GB RSS; simulations: SMS, sampled states, default 2e9 so that the walk count is

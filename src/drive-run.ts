@@ -1260,7 +1260,7 @@ export class Driver {
         case 'notify': if (a.scope === 'repo') return { report:{ ...base, scope:'repo', outcome:'notify', text:a.text, ...(a.once !== undefined ? { once:a.once } : {}), ...(a.invariantRed ? { invariantRed:a.invariantRed } : {}) }, applied:false }; if (a.reportedResume !== undefined) { await ops.recordReport(this.ledger!,a.node,a.reportedResume); s.nodes[a.node]!.reported = a.reportedResume; } return { report: { ...base, ...('need' in a ? { need: a.need } : {}), outcome: a.quiet ? 'answered' : 'notify', text: a.text, ...(a.answerRetry ? { answerRetry: true as const } : {}), ...(a.rid !== undefined ? { rid: a.rid } : {}), ...(a.qid !== undefined ? { qid: a.qid, rev: a.rev } : {}) }, applied: false };
       }
     } catch (e) {
-      // F4 (app #31): a failed send names its node, kind and target like any other send line.
+      // F4 (field report #31): a failed send names its node, kind and target like any other send line.
       const extra = a.do === 'send' ? { attempt: a.attempt, rid: a.rid, sendKind: a.sendKind, reason: a.reason, ...(a.send ? { send: a.send } : {}) } : {};
       if (e instanceof OwedError && e.code === 'stale') {
         if (a.do === 'launch' && a.role === 'writer') await ops.closeStaleSlot({ cwd, node:a.node, attempt:a.attempt });

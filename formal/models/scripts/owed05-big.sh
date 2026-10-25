@@ -1,5 +1,5 @@
 #!/bin/bash
-# owed05 at bigger bounds (run on bench from formal/ after `cargo build --offline --release -p models`).
+# owed05 at bigger bounds (run on the bench host from formal/ after `cargo build --offline --release -p models`).
 # Safety properties and the findings; the liveness property (whole graph kept) only on M1.
 # Usage: bash models/scripts/owed05-big.sh [timeout_s per run, default 900] [runs, default all, e.g. "M4 M5"]
 # Memory: ~300 bytes per distinct state at these sizes (full frontier states); every run is capped at 22M states (simulation: MS,

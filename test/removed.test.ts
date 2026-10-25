@@ -1,4 +1,4 @@
-// F4 (contract 0.11, app #27, #33c, #31, #34): removed nodes and small routing fixes.
+// F4 (contract 0.11, field report #27, #33c, #31, #34): removed nodes and small routing fixes.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { decide, type DriveOpts } from '../src/drive.ts';

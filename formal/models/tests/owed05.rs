@@ -1,5 +1,5 @@
 //! owed05: bounded exhaustive checks of the owed 0.5 model (`cargo test --offline --release -p models -- owed05`).
-//! Bigger bounds run through `owedmc` on bench (formal/REPORT-mc-owed.md).
+//! Bigger bounds run through `owedmc` on the bench host (formal/REPORT-mc-owed.md).
 
 use mc::{Consts, Model, Options, Report, Trace, Verdict, check};
 use models::owed05::{Action, Chk, E, Ev, IntentKind, Obl, Owed05, P, Proc, S, build_model, AD, CK, RC0};

@@ -221,8 +221,8 @@ test('RA2: existing ledger bytes verify and full/incremental replay share the ba
   let incremental = reduce(fixture.entries.slice(0, 1), lookup);
   for (const e of fixture.entries.slice(1)) incremental = reduceFrom(incremental, [e], lookup);
   assert.equal(sameReplay(incremental, full), true);
-  assert.equal(full.head, '7bc18704699de17ffaa4be88eb5606bc1e0b6cf3e71b5bc8ea9c044e4a8ff9a2');
-  assert.equal(sha256(canonical(full)), '0d1f0bfda29cb0db686019dd83389f89adecb25c39a3962e7514be2f443fb59e', 'full state digest measured on ebf090b');
+  assert.equal(full.head, '4b1f2a6283d19994f346c13395e58208b3a62f8ec1359a22dc4d71e7674e7658');
+  assert.equal(sha256(canonical(full)), 'c3184ac9b63ed4061196bfdadcf64ed926159e9d795f983284d87c06fb43a007', 'full state digest measured on ebf090b (recomputed for the neutralised fixture path in 0.33.1)');
 });
 
 class ReviewerDsa extends Dsa {

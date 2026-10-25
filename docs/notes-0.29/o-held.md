@@ -2,7 +2,7 @@
 
 ## Scope and implementation
 
-- Slot `/work/pi-owed/.owed/wt/o-held-1`, branch `owed/o-held/1`, base `74e5930` (0.28.0).
+- Slot `/home/user/project/pi-things/pi-owed/.owed/wt/o-held-1`, branch `owed/o-held/1`, base `74e5930` (0.28.0).
 - `src/needs.ts`: derive a held halt only from its active current-attempt halt plus a later named, non-prospective decision ruling. Suppress the halt fallback and writer-stop decision special case only. Keep independent owner/parent obligations and questions unchanged. Activity names the latest ruling and the optional resume release.
 - `src/views.ts`: compact/full status and brief show held progress. Why and receipt headlines name the ruling, and Next shows release without turning it into a need. Original halt evidence stays in the card/ledger; held halt diagnostics no longer say the parent/owner is needed. Owner-halt fallback rows are omitted, not independent owner obligations.
 - `src/drive-bg.ts`: existing structured-need revalidation drops obsolete queued resume/decide wakes. Null/legacy node halt reports are also revalidated for held rulings, including reports without fact marks; failed reads retain wakes. Driver scheduling, reducer, snapshots and ledger vocabulary are unchanged.
@@ -41,9 +41,9 @@ All node/npm/tsc/test commands run remotely in the foreground via `/tmp/owed-ben
 
 Final clean-commit checks (complete logs, first line must have tree equal to submitted HEAD^{tree} and dirty=0):
 
-- `/tmp/owed-bench/logs/o-held-final-typecheck.log`: `/tmp/owed-bench/run.sh /work/pi-owed/.owed/wt/o-held-1 900 "npx tsc --noEmit -p ."`.
-- `/tmp/owed-bench/logs/o-held-final-check.log`: `/tmp/owed-bench/run.sh /work/pi-owed/.owed/wt/o-held-1 1500 "node --test --test-concurrency=2 --test-reporter=tap test/oheld.test.ts test/decide.test.ts test/needs.test.ts test/needs-structure.test.ts test/views028.test.ts test/drive028.test.ts test/summary.test.ts test/compactreply.test.ts test/resume.test.ts test/drive-ledger.test.ts"`.
-- `/tmp/owed-bench/logs/o-held-final-full.log`: `/tmp/owed-bench/run.sh /work/pi-owed/.owed/wt/o-held-1 1800 "node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'"` (one full-suite run).
+- `/tmp/owed-bench/logs/o-held-final-typecheck.log`: `/tmp/owed-bench/run.sh /home/user/project/pi-things/pi-owed/.owed/wt/o-held-1 900 "npx tsc --noEmit -p ."`.
+- `/tmp/owed-bench/logs/o-held-final-check.log`: `/tmp/owed-bench/run.sh /home/user/project/pi-things/pi-owed/.owed/wt/o-held-1 1500 "node --test --test-concurrency=2 --test-reporter=tap test/oheld.test.ts test/decide.test.ts test/needs.test.ts test/needs-structure.test.ts test/views028.test.ts test/drive028.test.ts test/summary.test.ts test/compactreply.test.ts test/resume.test.ts test/drive-ledger.test.ts"`.
+- `/tmp/owed-bench/logs/o-held-final-full.log`: `/tmp/owed-bench/run.sh /home/user/project/pi-things/pi-owed/.owed/wt/o-held-1 1800 "node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'"` (one full-suite run).
 
 `git diff --stat 74e5930 -- src`:
 

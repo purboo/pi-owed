@@ -1,4 +1,4 @@
-// N3 (0.10.0, app #26): `owed amend <node> --writes +path --note LIMIT` edits the plan file (comments and flow style
+// N3 (0.10.0, field report #26): `owed amend <node> --writes +path --note LIMIT` edits the plan file (comments and flow style
 // kept), records it as `owed plan` would (same authority; N1 carries), and appends a ruling naming the node, in one lock.
 // Any refusal records nothing and leaves the file unchanged.
 import { test, type TestContext } from 'node:test';

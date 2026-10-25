@@ -1,4 +1,4 @@
-// E2 (0.5.1, app §41): check results that say what happened — mixed cargo + TAP counts, a failing command without
+// E2 (0.5.1, field report §41): check results that say what happened — mixed cargo + TAP counts, a failing command without
 // a test count is `fail` with its last output lines, and check processes do not inherit DSA_* variables.
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';

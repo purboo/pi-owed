@@ -37,7 +37,7 @@ test('differential: a synthetic ledger (waves, plan changes, rulings, merges) at
   assert.equal(m, undefined, show(m));
 });
 
-/** Real ledger copies (read-only): the app ledger and this repository's own ledger, on the test host if present. */
+/** Real ledger copies (read-only): a production ledger and this repository's own ledger, on the test host if present. */
 const REAL = (process.env.OWED_PERF_LEDGERS ?? [join(homedir(), 'owed-test/perf-app/owed'), join(homedir(), 'owed-test/perf-self/owed')].join(':')).split(':').filter(Boolean);
 for (const dir of REAL) {
   const present = existsSync(join(dir, 'ledger.jsonl'));

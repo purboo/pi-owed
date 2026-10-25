@@ -1,4 +1,4 @@
-// WA1–WA4: real CLI/ops/driver regressions for the app 0.25 feedback.
+// WA1–WA4: real CLI/ops/driver regressions for the 0.25 field feedback.
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';

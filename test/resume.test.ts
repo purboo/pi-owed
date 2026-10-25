@@ -1,4 +1,4 @@
-// L1 (contract 0.8, app #16-#18): `owed resume` clears a driver halt without an obligation, starts a new repair epoch
+// L1 (contract 0.8, field report #16-#18): `owed resume` clears a driver halt without an obligation, starts a new repair epoch
 // and can make the node wait for another node to merge; halts and wakes name the dsa call address; hints.
 import { assertWakeLines } from './helpers/wake.ts';
 import { test } from 'node:test';
@@ -134,7 +134,7 @@ test('L1.2 (#18): a resume clears the halt and adds no obligation; it starts a n
   assert.deepEqual(repairEpoch(r.state(), 'a'), { seq: res.seq, label: `resume #${res.seq}` });
   // The driver retries the merge on its next pass.
   assert.deepEqual(act(r), { do: 'merge', node: 'a' });
-  // A ruling naming the node would have added an acknowledgment obligation (the 0.7 way, app #18).
+  // A ruling naming the node would have added an acknowledgment obligation (the 0.7 way, field report #18).
   r.add({ kind: 'rule', by: 'parent:main', text: 'measure again', nodes: ['a'] });
   assert.equal(r.state().nodes.a!.items.find(i => i.obligation === 'rulings')!.status, 'D');
   assert.equal(r.state().nodes.a!.accepted, false);

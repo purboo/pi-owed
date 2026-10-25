@@ -1,4 +1,4 @@
-// 0.11 env (contract-0.11.md F2): environment failures wait, they do not halt (app #36, #12).
+// 0.11 env (contract-0.11.md F2): environment failures wait, they do not halt (field report #36, #12).
 import { clockTime } from '../src/clock.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
