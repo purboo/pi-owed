@@ -107,7 +107,7 @@ jobs:
           for v in $VERSIONS; do
             if [ "$v" = "$latest" ]; then echo "::warning::skipping latest $v"; continue; fi
             if [ "$MODE" = "unpublish" ]; then
-              npm unpublish "$name@$v" --force --loglevel verbose
+              npm unpublish "$name@$v" --force
             else
               npm deprecate "$name@$v" "$MESSAGE"
             fi
