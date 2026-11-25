@@ -5667,14 +5667,31 @@ drive:
   repairs: 2             # follow-ups after a failed check / block before halting (default 2, integer >= 0)
   measure: 2             # attests and merges in flight at once (0.7.0; default 2, integer >= 1)
   min_free_mb: 2048      # free MB the driver needs before it starts a measurement (0.11; default 2048, 0 disables)
-  writer:   { agent: worker,   model: "example/model-large:high" }   # default {agent: worker}
-  reviewer: { agent: owed-reviewer, model: "example/model-large:high" }   # default {agent: owed-reviewer}
+  writer:   { agent: worker,   model: "example/model-large:high", limits: { memoryMb: 4096, maxProcesses: 64 } }   # default {agent: worker}
+  reviewer: { agent: owed-reviewer, model: "example/model-large:high", limits: { memoryMb: 2048 } }                  # default {agent: owed-reviewer}
 ```
-Optional; `model` is optional (agent default). `parsePlan` fills the defaults
-when the block is present (`Plan.drive`; absent block → `Plan.drive`
-undefined, `driveConfig(plan)` returns the defaults) and rejects unknown keys
-(in `drive`, `writer`, `reviewer`) and bad types. It is not an obligation:
-changing or removing `drive:` is never a downgrade (a plan change by parent).
+Optional; `model` and `limits` are optional (agent default; no `limits` key).
+`parsePlan` fills the defaults when the block is present (`Plan.drive`; absent
+block → `Plan.drive` undefined, `driveConfig(plan)` returns the defaults) and
+rejects unknown keys (in `drive`, `writer`, `reviewer`, `limits`) and bad types.
+It is not an obligation: changing or removing `drive:` is never a downgrade (a
+plan change by parent).
+
+**Per-role DSA limits.** Both plan `drive.<role>` and node `drive.<role>` may
+set `limits: {memoryMb?, maxProcesses?, cpuPercent?, graceMs?, strict?}`
+(matching `pi-durable-subagents`'s `spec.limits` contract: `memoryMb` and
+`cpuPercent` positive finite numbers, `maxProcesses` positive safe integer,
+`graceMs` nonnegative finite number, `strict` boolean; unknown keys such as
+`env` are errors; `limits: {}` drops as absent). When present and non-empty,
+`limits` is passed directly in the canonical JSON launch spec (`launchSpec`,
+and re-launches replay the stored spec bytes on recovery), while roles without
+`limits` keep byte-identical launch specs. Node `drive.<role>.limits` merges
+field-by-field onto the plan role's `limits` even when the node replaces
+`agent` (for example, plan `{agent: worker, model: "example/model-large:high",
+limits: {memoryMb: 4096, graceMs: 5000}}` + node `{agent: worker-cheap,
+limits: {memoryMb: 1024}}` → `{agent: worker-cheap, limits: {memoryMb: 1024,
+graceMs: 5000}}`). Normal plan edits (`owed edit --drive` and node edits under
+`drive.<role>.limits.*`) validate with the same parser.
 `measure` (0.7.0) is kept in the parsed plan only when the YAML sets it
 (`measureCap(plan)` applies the default 2), so a plan that does not use it
 keeps its canonical bytes and sha; a 0.6.x parser refuses a plan that sets it.
@@ -5710,15 +5727,15 @@ nodes:
       reviewer: { model: "example/model-small" }  # model only: the plan's reviewer agent with this model
 ```
 
-Shape `{writer?: {agent?, model?}, reviewer?: {agent?, model?},
+Shape `{writer?: {agent?, model?, limits?}, reviewer?: {agent?, model?, limits?},
 same_model?: accepted}`, validated like the plan's roles (unknown keys and bad types are errors, e.g.
 `nodes[0].drive.writer.effort: unknown key`); `max` and `repairs` stay
-plan-wide. `drive: {}` and an empty role object count as absent: they are
-dropped from the parsed plan, so a plan without node `drive` keeps its
+plan-wide. `drive: {}`, empty role objects and empty `limits: {}` count as
+absent: they are dropped from the parsed plan, so a plan without node `drive` keeps its
 canonical bytes and sha. The driver's launch spec for a node
 (`driveConfig(plan, node)`) takes each role from the plan's `drive` (or the
 defaults) and applies the node's object for that role, because a model belongs
-to its agent:
+to its agent (while `limits` fields merge over the plan role's limits):
 - the node's object sets `agent`: it replaces the plan's role; the model is the
   node's `model` if set, otherwise none (the agent's own default model applies).
   Plan `{agent: worker, model: opus}` + node `{agent: worker-cheap}` →

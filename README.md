@@ -590,14 +590,28 @@ globally or on the node; existing recorded launches keep their agent:
 
 ```yaml
 drive:
-  writer:   { agent: worker,   model: "example/model-large:high" }
-  reviewer: { agent: owed-reviewer, model: "example/model-large:high" }
+  writer:   { agent: worker,   model: "example/model-large:high", limits: { memoryMb: 4096, maxProcesses: 64, graceMs: 5000 } }
+  reviewer: { agent: owed-reviewer, model: "example/model-large:high", limits: { memoryMb: 2048, strict: false } }
 nodes:
   - id: docs-pass
     drive:
-      writer:   { agent: worker-cheap }            # agent set: replaces the plan's writer (its own default model)
-      reviewer: { model: "example/model-small" }   # model only: the plan's reviewer agent with this model
+      writer:   { agent: worker-cheap, limits: { memoryMb: 1024 } }  # agent replaces writer; limits merge over plan role
+      reviewer: { model: "example/model-small" }                     # model only: keeps plan reviewer agent and its limits
 ```
+
+**Per-role dsa resource limits (`limits`):** `drive.writer.limits`,
+`drive.reviewer.limits` and node `drive.<role>.limits` accept
+`{memoryMb?, maxProcesses?, cpuPercent?, graceMs?, strict?}`, validated against
+dsa's call-spec limits contract (`memoryMb` and `cpuPercent` positive finite
+numbers, `maxProcesses` positive integer, `graceMs` nonnegative finite number,
+`strict` boolean; unknown keys and empty/non-object values behave as contract
+errors or absent `{}` respectively, with no `env` field). A node role merges its
+`limits` per field over the plan role's `limits` under both agent-replacement
+and model-only overrides. When non-empty, `limits` is included in the canonical
+dsa launch spec JSON (and re-launches replay stored bytes on recovery); roles
+without `limits` emit byte-identical specs. Changing `limits` is never a
+downgrade and affects only later launches, and normal `owed edit` (`--drive` or
+node `drive.<role>.limits.*`) edits and validates these fields.
 
 Batch merge measurements survive an unrelated node-only plan edit only when
 every intervening plan, projected onto members plus all global settings,
@@ -1097,6 +1111,23 @@ keeps its target literal. Use tool `nodes` or separate edits for a colliding
 batch. Otherwise comma parts are trimmed and empty parts refuse. Creation
 allows only one distinct node; dry-run prints one diff and all downgrades.
 `owed amend` continues to work as before.
+
+To append a single leaf node without writing YAML `--set` expressions by hand, run:
+
+```sh
+owed add-leaf follow-up --writes src/foo.ts --writes test/foo.test.ts \
+  --check 'node --test test/foo.test.ts' \
+  --brief 'Fix edge case in foo and cover it with a regression test.' \
+  --after auth-api --note 'Add follow-up leaf'
+```
+
+`owed add-leaf` reuses the `owed edit --node-new` transaction, authority,
+duplicate-ID rejection, plan-file locking and `--dry-run` preview. Repeat
+`--writes` once per path. A comma inside a write path stays literal. Repeat
+`--after` for dependencies or pass a comma-separated dependency list. `--brief` populates the node's inline `brief` text field directly,
+`--check` defines check `leaf` with default `reads`/`timeout_s`, and review
+requirements follow the plan default and top-level `risk` rules. `--note`
+defaults to `add leaf <id>`.
 
 To widen one node's writes without rewriting the plan by hand, run `owed amend <node> --writes +path[,+path...] --note "<limit>" [--plan <file>]` (pi `owed_amend`). It appends the paths to the node's `writes` in the plan file (default: the file the latest plan entry recorded; comments and layout are kept), records it as `owed plan` would (same authority: the owner, or a parent under an `allow` rule; open candidates are carried), and in the same lock records a ruling `writes of <node> widened by plan #P: +<paths>. Limit: <limit>`, which the writer receives and reviewers acknowledge. It refuses, recording nothing and leaving the file unchanged, when the file has unrecorded edits, the node is unknown or merged, a removal is requested (`-path`, which needs `owed plan`), or the note is empty. Bare paths mean additions just like `+path`. A requested scope is covered only when equal to or provably contained by an existing write; `src/lib` under `src/*` widens, because a filename match is not prefix-range containment. Covered paths report `already covered by <entry>`; an all-covered amend changes neither file nor ledger. An all-covered decide still records its ruling/defer/resume but no plan entry and says `writes unchanged`. Multiple nodes must receive equal additions after dropping covered paths per node; mismatches name each node's covered and added scopes. An allow rule is not an existing write (SPEC §3, §8.3.1).
 

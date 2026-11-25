@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 type Class = 'help/usage' | 'comment' | 'Git commit message' | 'executable argv' | 'diagnostic example' | 'historical text' | 'Git-derived status addition' | 'operation refusal' | 'cycle-blocked remedy';
 type Site = { file: string; fn: string; literal: string; comment: boolean };
 type Registered = [file: string, fn: string, kind: Class, reason: string, literal: string];
-const acts = /\bowed\s+(?:start|decide|answer|init|plan|rule|edit|amend|dispatch|submit|rebase|attest|review|waive|defer|abandon|resume|approve|evidence|merge|adopt|status|idle|why|report|brief|verify|sweep|escape|decoy|gc|drive|watch|help|version)\b|\bowed\s+\$\{/;
+const acts = /\bowed\s+(?:start|decide|answer|init|plan|rule|edit|add-leaf|amend|dispatch|submit|rebase|attest|review|waive|defer|abandon|resume|approve|evidence|merge|adopt|status|idle|why|report|brief|verify|sweep|escape|decoy|gc|drive|watch|help|version)\b|\bowed\s+\$\{/;
 function enclosing(node: ts.Node): string {
   let name = '<module>';
   for (let p: ts.Node | undefined = node; p; p = p.parent) {
@@ -67,7 +67,7 @@ const digest = (literal: string): string => createHash('sha256').update(literal)
 const at = (file: string, fn: string, kind: Class, reason: string, literals: string[]): Registered[] => literals.map(literal => [file, fn, kind, reason, literal]);
 const registered: Registered[] = [
   ...at('src/answer.ts', 'rulingDeliveryWarnings', 'cycle-blocked remedy', 'R-028-64: views.oneLine has other callers; needs -> views -> needs.', ['c755286339b655ec6008549ca5bc9fc371efb94b4af1c4e74b2266aa0d6d362d', '0733c972e32508b7edd7ac6726c7f52e1b1e70d6f814dfc0589f3858087cbffd', '461bda46a50609e8923b7485a99c49bf6aa6ed1d5518330d0911c59e7de6dc90']),
-  ...at('src/cli.ts', 'HELP', 'help/usage', 'SM1/SM3, TB1/HP1, AO2, CT1, ME1/R-030-ME-1, FW4/PR1–PR2 and UX1: CLI grammar includes list acknowledgments, drive edit targets, waiver trackers, allow-only caps, exact-commit/ad-hoc check try diagnostics with informational receipts, batch edit targets, literal comma-ID precedence, driver watch cursors/timeouts and the owed question command.', ['20bfdc40e403813b567a67fcc4a23ba50ed274909068884a53203e154beefd13']),
+  ...at('src/cli.ts', 'HELP', 'help/usage', 'SM1/SM3, TB1/HP1, AO2, CT1, ME1/R-030-ME-1, FW4/PR1–PR2, UX1 and add-leaf: CLI grammar includes list acknowledgments, drive edit targets, waiver trackers, allow-only caps, exact-commit/ad-hoc check try diagnostics with informational receipts, batch edit targets, literal comma-ID precedence, driver watch cursors/timeouts, the owed question command and the owed add-leaf shorthand.', ['8860ea67315c2d9cf25dfbab342fc99da28118fcdc0993c86eeb397e6a781b28']),
   ...at('src/reducer.ts', 'adoptGuard', 'operation refusal', 'SM2: incomplete genesis refusal names the existing completion command.', ['67821012b668cefdeda42e54cfa2ae3880bfb7e4ad66bf74624ec904f5b5e1eb']),
   ...at('src/reducer.ts', 'scopedMergeGuard', 'operation refusal', 'SM2: same incomplete genesis refusal for merge.', ['67821012b668cefdeda42e54cfa2ae3880bfb7e4ad66bf74624ec904f5b5e1eb']),
   ...at('src/watch.ts', 'watchDriver', 'help/usage', 'FW4: initialization guidance when no live driver can be followed.', ['5666c80c66974b3866911c7f86dc7a05e0f9255357ad97a6793b851ab2089292']),

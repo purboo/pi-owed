@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.34.0
+
+- Set DSA process limits on `drive.writer` and `drive.reviewer`. A node can override individual limits, such as `memoryMb`, while inheriting the other plan defaults. Recovery reuses the recorded launch specification. Upgrade the driver and plan readers before using these fields.
+- Append a checked node to a running plan with `owed add-leaf`. It uses the existing atomic plan edit, supports `--dry-run`, and preserves the node across driver restarts. Run `owed help add-leaf` for the options.
+
 ## 0.33.2
 
 No behavior change. Finishes the cleanup begun in 0.33.1: every remaining local machine path, host

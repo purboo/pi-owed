@@ -5,14 +5,15 @@ import { wrapErrors } from './exec-wrap.ts';
 import { matchesGlob } from 'node:path';
 import { OwedError } from './errors.ts';
 import { canonical } from './canon.ts';
-import type { QuarantineEntry, Plan, CheckSpec, InvariantSpec, NodeSpec, Downgrade, DriveAgent, DriveConfig, NodeDrive, NodeDriveAgent, WorktreesConfig, ExecConfig, EvidenceSpec, AllowRule } from './types.ts';
+import type { QuarantineEntry, Plan, CheckSpec, InvariantSpec, NodeSpec, Downgrade, DsaLimits, DriveAgent, DriveConfig, NodeDrive, NodeDriveAgent, WorktreesConfig, ExecConfig, EvidenceSpec, AllowRule } from './types.ts';
 
 /** Driver defaults (SPEC §12, D2). */
 export const DRIVE_DEFAULTS: DriveConfig = { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'owed-reviewer' } };
 /**
  * The plan's driver config, or the defaults when it has no `drive:` block. With `node`, that node's `drive` (K3)
  * overrides each role it sets: a role object with `agent` replaces the plan's (model: the node's, else none, so the
- * agent's own default applies); one with only `model` keeps the plan's agent and overrides the model.
+ * agent's own default applies); one with only `model` keeps the plan's agent and overrides the model. Limit fields
+ * merge per field onto the plan role's limits under both forms.
  */
 export function driveConfig(plan: Plan, node?: string): DriveConfig {
   const cfg = structuredClone(plan.drive ?? DRIVE_DEFAULTS), own = node === undefined ? undefined : plan.nodes.find(n => n.id === node)?.drive;
@@ -20,19 +21,56 @@ export function driveConfig(plan: Plan, node?: string): DriveConfig {
   if (own?.same_model !== undefined) cfg.same_model = own.same_model;
   return cfg;
 }
+function mergeRoleLimits(base: DsaLimits | undefined, own: DsaLimits | undefined): DsaLimits | undefined {
+  if (!base && !own) return undefined;
+  const merged: DsaLimits = { ...base, ...own };
+  return Object.keys(merged).length ? merged : undefined;
+}
 /** K3: one role of the plan's config with a node override applied (see `driveConfig`). */
 function overrideAgent(base: DriveAgent, own: NodeDriveAgent | undefined): DriveAgent {
-  if (own?.agent !== undefined) return { agent: own.agent, ...(own.model !== undefined ? { model: own.model } : {}) };
-  if (own?.model !== undefined) return { agent: base.agent, model: own.model };
-  return base;
+  const limits = mergeRoleLimits(base.limits, own?.limits);
+  const withLimits = (a: DriveAgent): DriveAgent => limits ? { ...a, limits } : a;
+  if (own?.agent !== undefined) return withLimits({ agent: own.agent, ...(own.model !== undefined ? { model: own.model } : {}) });
+  if (own?.model !== undefined) return withLimits({ agent: base.agent, model: own.model });
+  return withLimits({ agent: base.agent, ...(base.model !== undefined ? { model: base.model } : {}) });
 }
-/** Validates a `{agent?, model?}` role object (plan `drive.writer`/`drive.reviewer`, node `drive.*`); returns the fields set. */
+const LIMIT_KEYS = ['memoryMb', 'maxProcesses', 'cpuPercent', 'graceMs', 'strict'] as const;
+/** Validates per-role DSA limits matching pi-durable-subagents' `spec.limits` contract; empty `{}` drops as absent. */
+function parseLimits(x: unknown, label: string, errors: string[]): DsaLimits | undefined {
+  if (!x || typeof x !== 'object' || Array.isArray(x)) { errors.push(`${label}: expected object`); return undefined; }
+  const r = x as Record<string, unknown>, out: DsaLimits = {};
+  for (const k of Object.keys(r)) if (!(LIMIT_KEYS as readonly string[]).includes(k)) errors.push(`${label}.${k}: unknown key`);
+  for (const k of ['memoryMb', 'cpuPercent'] as const) {
+    const v = r[k];
+    if (v === undefined) continue;
+    if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) errors.push(`${label}.${k}: expected positive finite number`);
+    else out[k] = v;
+  }
+  if (r.maxProcesses !== undefined) {
+    if (typeof r.maxProcesses !== 'number' || !Number.isSafeInteger(r.maxProcesses) || r.maxProcesses < 1) errors.push(`${label}.maxProcesses: expected positive integer`);
+    else out.maxProcesses = r.maxProcesses;
+  }
+  if (r.graceMs !== undefined) {
+    if (typeof r.graceMs !== 'number' || !Number.isFinite(r.graceMs) || r.graceMs < 0) errors.push(`${label}.graceMs: expected nonnegative finite number`);
+    else out.graceMs = r.graceMs === 0 ? 0 : r.graceMs;
+  }
+  if (r.strict !== undefined) {
+    if (typeof r.strict !== 'boolean') errors.push(`${label}.strict: expected boolean`);
+    else out.strict = r.strict;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+/** Validates a `{agent?, model?, limits?}` role object (plan `drive.writer`/`drive.reviewer`, node `drive.*`); returns the fields set. */
 function parseAgent(x: unknown, label: string, errors: string[]): NodeDriveAgent | undefined {
   if (!x || typeof x !== 'object' || Array.isArray(x)) { errors.push(`${label}: expected object`); return undefined; }
   const a = x as Record<string, unknown>, res: NodeDriveAgent = {};
-  for (const k of Object.keys(a)) if (k !== 'agent' && k !== 'model') errors.push(`${label}.${k}: unknown key`);
+  for (const k of Object.keys(a)) if (k !== 'agent' && k !== 'model' && k !== 'limits') errors.push(`${label}.${k}: unknown key`);
   if (a.agent !== undefined) { if (typeof a.agent !== 'string' || !a.agent.trim()) errors.push(`${label}.agent: expected non-empty string`); else res.agent = a.agent; }
   if (a.model !== undefined) { if (typeof a.model !== 'string' || !a.model.trim()) errors.push(`${label}.model: expected non-empty string`); else res.model = a.model; }
+  if (a.limits !== undefined) {
+    const limits = parseLimits(a.limits, `${label}.limits`, errors);
+    if (limits) res.limits = limits;
+  }
   return res;
 }
 /** MD2: an informational acknowledgement, never an acceptance downgrade. */
@@ -81,7 +119,7 @@ function parseDrive(v: unknown, errors: string[]): DriveConfig {
   const agent = (x: unknown, label: string, dflt: DriveAgent): DriveAgent => {
     if (x === undefined) return dflt;
     const a = parseAgent(x, label, errors);
-    return a ? { agent: a.agent ?? dflt.agent, ...(a.model !== undefined ? { model: a.model } : {}) } : dflt;
+    return a ? { agent: a.agent ?? dflt.agent, ...(a.model !== undefined ? { model: a.model } : {}), ...(a.limits !== undefined ? { limits: a.limits } : {}) } : dflt;
   };
   const ack = parseSameModel(r.same_model, 'drive.same_model', errors);
   if (ack) out.same_model = ack;

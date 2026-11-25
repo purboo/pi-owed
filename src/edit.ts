@@ -40,12 +40,17 @@ function editDriveText(text: string, o: EditFields): string {
   const target = isMap(prior) ? prior : doc.createNode({});
   const apply = (path: string, raw?: string) => {
     const p = parts(path,o);
-    if (raw === undefined) { if (!target.deleteIn(p)) usage(`Cannot unset missing edit path: ${path}`); return; }
+    if (raw === undefined) {
+      let deleted: boolean;
+      try { deleted = target.deleteIn(p); } catch { usage(`Cannot unset non-mapping edit path: ${path}`); }
+      if (!deleted) usage(`Cannot unset missing edit path: ${path}`);
+      return;
+    }
     const value = parseDocument(raw);
     if (value.errors.length) usage(`Invalid YAML value for ${path}`);
     const next = value.contents?.clone() ?? doc.createNode(null), old = target.getIn(p,true);
     if (isNode(old)) { next.comment = old.comment; next.commentBefore = old.commentBefore; next.spaceBefore = old.spaceBefore; }
-    target.setIn(p,next);
+    try { target.setIn(p,next); } catch { usage(`Cannot set nested edit path on non-mapping: ${path}`); }
   };
   for (const assignment of o.set ?? []) {
     const eq = assignment.indexOf('=');
@@ -121,12 +126,14 @@ export function editText(text: string, o: EditFields): string {
     // RF1: a stored canonical command is derived metadata; regenerate it when its pin/argv is edited.
     const runPath = o.invariant !== undefined ? 'run' : `checks.${p[1]}.run`;
     if (['run_file','args'].includes(at.path[0]!) && pinned.has(at.map)) regenerate.set(at.map,runPath);
-    at.map.setIn(at.path,next);
+    try { at.map.setIn(at.path,next); } catch { usage(`Cannot set nested edit path on non-mapping: ${p.join('.')}`); }
   }
   for (const path of o.unset ?? []) {
     const at = locate(parts(path,o),false);
-    if (!at || !at.map.deleteIn(at.path)) usage(`Cannot unset missing edit path: ${path}`);
-    if (at.path[0] === 'args' && pinned.has(at.map)) regenerate.set(at.map,o.invariant !== undefined ? 'run' : `checks.${path.split('.')[1]}.run`);
+    let deleted: boolean;
+    try { deleted = !!at && at.map.deleteIn(at.path); } catch { usage(`Cannot unset non-mapping edit path: ${path}`); }
+    if (!deleted) usage(`Cannot unset missing edit path: ${path}`);
+    if (at!.path[0] === 'args' && pinned.has(at!.map)) regenerate.set(at!.map,o.invariant !== undefined ? 'run' : `checks.${path.split('.')[1]}.run`);
   }
   for (const [map,runPath] of regenerate) if (map.has('run_file') && !(o.set ?? []).some(s => s.slice(0,s.indexOf('=')) === runPath)) map.delete('run');
   if (o.node_new) list.add(target);

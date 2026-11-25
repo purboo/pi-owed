@@ -54,16 +54,24 @@ export interface NodeSpec {
   /** FL4: backlog, ineligible for dispatch; never part of an obligation key. */
   later?: boolean;
 }
-/** K3: a node's `drive` override of one role: at least one of `agent` / `model` (an empty object is dropped by the parser). */
-export interface NodeDriveAgent { agent?: string; model?: string }
+/** Per-role DSA resource limits (`spec.limits` in pi-durable-subagents). */
+export interface DsaLimits {
+  memoryMb?: number;
+  maxProcesses?: number;
+  cpuPercent?: number;
+  graceMs?: number;
+  strict?: boolean;
+}
+/** K3: a node's `drive` override of one role: at least one of `agent` / `model` / `limits` (an empty object is dropped by the parser). */
+export interface NodeDriveAgent { agent?: string; model?: string; limits?: DsaLimits }
 /** K3: optional node field `drive`; only roles that set something are present (`drive: {}` is dropped by the parser). */
 export interface NodeDrive { writer?: NodeDriveAgent; reviewer?: NodeDriveAgent; /** MD2: quiet same-model warning; no gate changes. */ same_model?: 'accepted' }
 /** D19: optional `worktrees:` block of the plan; never an obligation, read by later dispatches only. */
 export interface WorktreesConfig { root: string /* absolute, or relative to the main worktree root */; branch: string /* template with {node}, {attempt}, optional {type} */ }
 /** D23: one manual evidence obligation of a node; `by` (default reviewer) is the role that may record it (the owner always may). */
 export interface EvidenceSpec { id: string; what: string; by: 'reviewer' | 'parent' | 'owner' }
-/** Agent (and optional model) the driver launches for a role (SPEC §12, D2). */
-export interface DriveAgent { agent: string; model?: string }
+/** Agent (and optional model and DSA limits) the driver launches for a role (SPEC §12, D2). */
+export interface DriveAgent { agent: string; model?: string; limits?: DsaLimits }
 /** Optional `drive:` block of the plan (SPEC §12, D2); defaults max 4, repairs 2, writer agent worker, reviewer agent reviewer. Never an obligation. */
 export interface DriveConfig { delegate?: DelegateConfig; max: number; repairs: number; writer: DriveAgent; reviewer: DriveAgent; /** 0.7.0: measurements in flight at once; present only when the plan sets it (default `MEASURE_DEFAULT`). */ measure?: number; /** 0.11 (F2.3): free MB below which the driver starts no measurement; present only when the plan sets it (default `MIN_FREE_DEFAULT`, 0 disables). */ min_free_mb?: number; /** FL4: idle reminder interval in minutes, default 60; 0 disables. */ idle_rewake_min?: number; /** WD: no-progress watchdog interval in minutes, default 15; 0 disables. */ watch_idle_min?: number; /** QN1/QT5: seconds before reminding about an answered question still open in dsa (default 600). */ answer_grace_s?: number; /** MD2: quiet same-model warning; no gate changes. */ same_model?: 'accepted'; /** MT1 (0.21): members of one batch merge, 1..8; present only when the plan sets it (default 1 = off). */ merge_batch?: number }
 /**

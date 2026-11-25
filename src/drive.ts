@@ -17,7 +17,7 @@ export { thresholdHint, rejectedFixed, rejectedHalt } from './needs.ts';
 import type { Need, Runtime } from './needs-types.ts';
 import { nodeReview, ownerNeeded, dispatchSkip, heldFlaky, flakyBlockText } from './reducer.ts';
 export { ownerNeeded } from './reducer.ts';
-import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
+import type { AttemptRuns, Block, DsaLimits, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
 /** One driver action (contract D4). At most one scheduled action per node; EV3 adds a log-only notify alongside it. */
 export type Action =
@@ -145,12 +145,13 @@ export function setupNotices(s: State, blobs: ReadonlyMap<string,string> | undef
 
 // ---------- spec bytes, tasks and messages (pure, deterministic) ----------
 /**
- * Exact dsa spec bytes of a driver launch: canonical JSON (keys sorted, no whitespace) of {agent, model?, cwd,
+ * Exact dsa spec bytes of a driver launch: canonical JSON (keys sorted, no whitespace) of {agent, model?, limits?, cwd,
  * isolation:"none", name?, once:true, task}. The same inputs always give the same bytes, so a retry rebuilds them identically.
  * `name` is dsa's run name (D22.5: `runName`), shown in pi's subagent views.
  */
-export function launchSpec(o: { agent: string; model?: string; cwd: string; task: string; name?: string }): string {
-  return canonical({ agent: o.agent, ...(o.model !== undefined ? { model: o.model } : {}), cwd: o.cwd, isolation: 'none', ...(o.name !== undefined ? { name: o.name } : {}), once: true, task: o.task });
+export function launchSpec(o: { agent: string; model?: string; limits?: DsaLimits; cwd: string; task: string; name?: string }): string {
+  const limits = o.limits && Object.keys(o.limits).length ? o.limits : undefined;
+  return canonical({ agent: o.agent, ...(limits !== undefined ? { limits } : {}), ...(o.model !== undefined ? { model: o.model } : {}), cwd: o.cwd, isolation: 'none', ...(o.name !== undefined ? { name: o.name } : {}), once: true, task: o.task });
 }
 /** dsa run name of a driver launch (D22.5): `owed <node>#<attempt> writer` / `owed <node>#<attempt> reviewer <n>`. */
 export const runName = (node: string, attempt: number, role: RunRole, n?: number): string => `owed ${node}#${attempt} ${role}${role === 'reviewer' ? ` ${n}` : ''}`;
